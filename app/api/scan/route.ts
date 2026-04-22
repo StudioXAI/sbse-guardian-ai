@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import axios from "axios";
 
 export async function POST(req: Request) {
   try {
@@ -12,26 +13,57 @@ export async function POST(req: Request) {
       });
     }
 
-    // Temporary demo response (real scanner comes next)
+    const apiKey = process.env.ETHERSCAN_API_KEY;
+
+    const url = `https://api.etherscan.io/api?module=contract&action=getsourcecode&address=${contractAddress}&apikey=${apiKey}`;
+
+    const response = await axios.get(url);
+    const data = response.data?.result?.[0];
+
+    if (!data) {
+      return NextResponse.json({
+        success: false,
+        message: "Contract not found",
+      });
+    }
+
+    const sourceCode = data.SourceCode || "";
+    const contractName = data.ContractName || "Unknown Project";
+
+    const findings = [];
+
+    if (sourceCode.includes("mint")) {
+      findings.push("Mint function detected");
+    }
+
+    if (sourceCode.includes("owner")) {
+      findings.push("Owner privileges detected");
+    }
+
+    if (sourceCode.includes("blacklist")) {
+      findings.push("Blacklist function detected");
+    }
+
+    if (findings.length === 0) {
+      findings.push("No major basic red flags detected");
+    }
+
     return NextResponse.json({
       success: true,
-      project: "Sample Token",
+      project: contractName,
       contractAddress,
-      riskScore: 4,
+      riskScore: findings.length + 2,
       sbseScore: 10,
-      findings: [
-        "Ownership is not renounced",
-        "Liquidity lock not detected",
-        "Mint function found",
-        "No blacklist function detected",
-      ],
+      findings,
       beginnerExplanation:
-        "This contract shows moderate risk. Owner privileges still exist and liquidity is not clearly locked.",
+        "This analysis checks for common rug-pull patterns like mint access, owner privileges, and blacklist functions.",
     });
   } catch (error) {
+    console.error(error);
+
     return NextResponse.json({
       success: false,
-      message: "Scan failed",
+      message: "Real scan failed",
     });
   }
 }
