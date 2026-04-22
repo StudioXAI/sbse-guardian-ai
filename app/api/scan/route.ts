@@ -1,4 +1,5 @@
-import { infiProjects } from "@/lib/infiProjects";
+import { fetchInfiProjects } from "@/lib/fetchInfiProjects";
+import { checkDexPair } from "@/lib/checkDexPair";
 import { NextResponse } from "next/server";
 import axios from "axios";
 
@@ -13,6 +14,9 @@ export async function POST(req: Request) {
         message: "No contract address provided",
       });
     }
+
+    // Dynamic INFI Shield Verification
+    const infiProjects = await fetchInfiProjects();
 
     const matchedProject = infiProjects.find(
       (project) =>
@@ -40,6 +44,9 @@ export async function POST(req: Request) {
           "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system. Investors receive stronger protection and trust visibility.",
       });
     }
+
+    // REAL DEX Pair Detection
+    const dexInfo = await checkDexPair(contractAddress);
 
     const apiKey = process.env.ETHERSCAN_API_KEY;
 
@@ -73,21 +80,36 @@ export async function POST(req: Request) {
     const findings = [];
     let riskScore = 2;
 
+    // DEX Pair Intelligence
+    if (dexInfo.found) {
+      findings.push(`DEX Pair Found: ${dexInfo.dex}`);
+      findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
+      findings.push(`24H Volume: ${dexInfo.volume24h}`);
+    } else {
+      findings.push("No Active DEX Pair Found");
+      findings.push("High Rug Pull Probability");
+      riskScore += 3;
+    }
+
+    // Mint Detection
     if (sourceCode.includes("mint")) {
       findings.push("Mint function detected");
       riskScore += 2;
     }
 
+    // Blacklist Detection
     if (sourceCode.includes("blacklist")) {
       findings.push("Blacklist function detected");
       riskScore += 2;
     }
 
+    // Owner Privileges
     if (sourceCode.includes("owner")) {
       findings.push("Owner privileges detected");
       riskScore += 1;
     }
 
+    // Ownership Renounce Detection
     if (
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
@@ -98,6 +120,7 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
+    // Honeypot Detection
     if (
       sourceCode.includes("maxwallet") ||
       sourceCode.includes("maxtx") ||
@@ -110,17 +133,32 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
+    // Advanced LP Detection
     if (
       sourceCode.includes("liquidity") ||
       sourceCode.includes("router") ||
-      sourceCode.includes("uniswapv2pair")
+      sourceCode.includes("uniswapv2pair") ||
+      sourceCode.includes("addliquidity") ||
+      sourceCode.includes("removeliquidity") ||
+      sourceCode.includes("pair")
     ) {
-      findings.push("Liquidity management logic detected");
+      findings.push("Liquidity pool interaction detected");
+
+      if (
+        sourceCode.includes("removeliquidity") ||
+        sourceCode.includes("withdrawliquidity")
+      ) {
+        findings.push("Liquidity removable by owner — Rug risk increased");
+        riskScore += 3;
+      } else {
+        findings.push("Basic liquidity presence detected");
+      }
     } else {
       findings.push("Liquidity lock verification not detected");
       riskScore += 2;
     }
 
+    // Proxy / Backdoor Detection
     if (
       sourceCode.includes("delegatecall") ||
       sourceCode.includes("implementation") ||
@@ -141,7 +179,7 @@ export async function POST(req: Request) {
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This report includes identity detection, verification status, token type, rug-pull patterns, proxy risks, liquidity safety, and SbSe Shield verification when applicable.",
+        "This report includes identity detection, verification status, token type, live DEX liquidity verification, rug-pull patterns, advanced liquidity risk detection, proxy risks, and dynamic SbSe Shield verification when applicable.",
     });
   } catch (error) {
     console.error(error);
