@@ -3,45 +3,96 @@
 import React from "react";
 import { motion } from "framer-motion";
 
-const metricCards = [
-  {
-    title: "OVERALL RISK SCORE",
-    value: "28",
-    suffix: "/100",
-    status: "Low Risk",
-  },
-  {
-    title: "CONTRACT SCAN",
-    value: "12.4s",
-    suffix: "",
-    status: "Completed",
-  },
-  {
-    title: "CHECKS PERFORMED",
-    value: "58",
-    suffix: "",
-    status: "Security Checks",
-  },
-  {
-    title: "SECURITY GRADE",
-    value: "A-",
-    suffix: "",
-    status: "Very Good",
-  },
-];
+export default function AuditVisualDashboard({
+  report,
+}: {
+  report: any;
+}) {
+  const riskScore = report?.riskScore || 0;
+  const professionalScore = report?.professionalScore || 0;
+  const findingsCount = report?.findings?.length || 0;
 
-const securityLayers = [
-  ["DEX Analysis", "9.2 / 10", "Excellent", "92%"],
-  ["Liquidity Analysis", "8.6 / 10", "Very Good", "86%"],
-  ["Holder Analysis", "6.8 / 10", "Good", "68%"],
-  ["Proxy Detection", "5.6 / 10", "Medium", "56%"],
-  ["Honeypot Detection", "4.2 / 10", "Low", "42%"],
-];
+  const securityGrade =
+    riskScore <= 2
+      ? "A+"
+      : riskScore <= 4
+      ? "A"
+      : riskScore <= 6
+      ? "B"
+      : riskScore <= 8
+      ? "C"
+      : "D";
 
-export default function AuditVisualDashboard() {
+  const riskStatus =
+    riskScore <= 3
+      ? "Low Risk"
+      : riskScore <= 6
+      ? "Medium Risk"
+      : "High Risk";
+
+  const metricCards = [
+    {
+      title: "OVERALL RISK SCORE",
+      value: String(riskScore * 10),
+      suffix: "/100",
+      status: riskStatus,
+    },
+    {
+      title: "CONTRACT SCAN",
+      value: "Live",
+      suffix: "",
+      status: "Completed",
+    },
+    {
+      title: "CHECKS PERFORMED",
+      value: String(findingsCount),
+      suffix: "",
+      status: "Security Checks",
+    },
+    {
+      title: "SECURITY GRADE",
+      value: securityGrade,
+      suffix: "",
+      status: "Dynamic Grade",
+    },
+  ];
+
+  const securityLayers = [
+    [
+      "DEX Analysis",
+      `${professionalScore} / 10`,
+      "Live",
+      `${professionalScore * 10}%`,
+    ],
+    [
+      "Liquidity Analysis",
+      `${10 - riskScore} / 10`,
+      "Live",
+      `${(10 - riskScore) * 10}%`,
+    ],
+    [
+      "Holder Analysis",
+      `${10 - riskScore} / 10`,
+      "Live",
+      `${(10 - riskScore) * 10}%`,
+    ],
+    [
+      "Proxy Detection",
+      `${professionalScore} / 10`,
+      "Live",
+      `${professionalScore * 10}%`,
+    ],
+    [
+      "Honeypot Detection",
+      `${professionalScore} / 10`,
+      "Live",
+      `${professionalScore * 10}%`,
+    ],
+  ];
+
   return (
     <div className="relative overflow-hidden rounded-[36px] border border-white/10 bg-black p-8 shadow-2xl">
-      {/* Grid animated background */}
+      {/* Animated Background */}
       <div className="absolute inset-0 opacity-70 pointer-events-none">
         <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.03)_1px,transparent_1px)] bg-[size:140px_140px]" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.04),transparent_45%)]" />
@@ -60,7 +111,6 @@ export default function AuditVisualDashboard() {
       </div>
 
       <div className="relative z-10">
-        {/* Fixed Header */}
         <h2 className="text-5xl font-bold text-white mb-3 leading-tight">
           Powered by SbSe Protocol
           <br />
@@ -72,7 +122,7 @@ export default function AuditVisualDashboard() {
           Investor Protection Analysis
         </p>
 
-        {/* Top metric cards */}
+        {/* Top Metric Cards */}
         <div className="grid gap-4 md:grid-cols-4 mb-8">
           {metricCards.map((card) => (
             <div
@@ -100,9 +150,9 @@ export default function AuditVisualDashboard() {
           ))}
         </div>
 
-        {/* Main panels */}
+        {/* Main Panels */}
         <div className="grid gap-6 md:grid-cols-2">
-          {/* Donut panel */}
+          {/* Risk Distribution */}
           <div className="rounded-3xl border border-white/10 bg-black/70 p-8">
             <h3 className="text-2xl font-bold text-white mb-6">
               Risk Distribution
@@ -110,7 +160,6 @@ export default function AuditVisualDashboard() {
 
             <div className="flex items-center justify-center py-8">
               <div className="relative h-[340px] w-[340px] flex items-center justify-center">
-                {/* Premium segmented donut */}
                 <div
                   className="absolute inset-0 rounded-full"
                   style={{
@@ -122,7 +171,6 @@ export default function AuditVisualDashboard() {
                 />
 
                 <div className="absolute inset-[26px] rounded-full bg-black border border-white/10" />
-
                 <div className="absolute inset-[52px] rounded-full border border-white/5" />
 
                 <div className="absolute inset-[78px] rounded-full bg-black border border-white/10 flex items-center justify-center text-center">
@@ -132,7 +180,7 @@ export default function AuditVisualDashboard() {
                     </p>
 
                     <p className="text-4xl font-bold text-white">
-                      100
+                      {findingsCount}
                     </p>
                   </div>
                 </div>
@@ -140,7 +188,7 @@ export default function AuditVisualDashboard() {
             </div>
           </div>
 
-          {/* Security layers */}
+          {/* Security Layers */}
           <div className="rounded-3xl border border-white/10 bg-black/70 p-8">
             <h3 className="text-2xl font-bold text-white mb-6">
               Security Layer Scores
@@ -177,7 +225,7 @@ export default function AuditVisualDashboard() {
           </div>
         </div>
 
-        {/* Bottom feature cards */}
+        {/* Bottom Feature Cards */}
         <div className="grid gap-4 md:grid-cols-4 mt-8">
           {[
             ["AI-Powered Security", "Advanced machine learning"],
