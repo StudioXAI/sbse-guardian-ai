@@ -77,8 +77,18 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    if (findings.length === 0) {
-      findings.push("No major basic red flags detected");
+    // LP / Liquidity Detection
+    if (
+      sourceCode.includes("liquidity") ||
+      sourceCode.includes("addliquidity") ||
+      sourceCode.includes("removeliquidity") ||
+      sourceCode.includes("uniswapv2pair") ||
+      sourceCode.includes("router")
+    ) {
+      findings.push("Liquidity management logic detected");
+    } else {
+      findings.push("Liquidity lock verification not detected");
+      riskScore += 2;
     }
 
     return NextResponse.json({
@@ -89,14 +99,14 @@ export async function POST(req: Request) {
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This audit checks for mint access, blacklist risks, ownership safety, and common honeypot patterns where users can buy but may face restrictions when trying to sell.",
+        "This audit checks ownership safety, honeypot risks, and liquidity protection. If liquidity is not locked or removable, rug pull risk becomes significantly higher.",
     });
   } catch (error) {
     console.error(error);
 
     return NextResponse.json({
       success: false,
-      message: "Honeypot scan failed",
+      message: "Liquidity scan failed",
     });
   }
 }
