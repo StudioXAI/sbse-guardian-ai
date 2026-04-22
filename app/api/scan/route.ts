@@ -120,9 +120,24 @@ export async function POST(req: Request) {
      */
 
     const dexInfo = await checkDexPair(contractAddress);
-    const holderRisk = await checkHolderRisk(contractAddress);
-    const liquidityLock = await checkLiquidityLock(contractAddress);
-    const walletTrap = await checkWalletTraps(contractAddress);
+
+    /**
+     * IMPORTANT FIX:
+     * pass identity.symbol into holder check
+     */
+
+    const holderRisk = await checkHolderRisk(
+      contractAddress,
+      identity.symbol
+    );
+
+    const liquidityLock = await checkLiquidityLock(
+      contractAddress
+    );
+
+    const walletTrap = await checkWalletTraps(
+      contractAddress
+    );
 
     /**
      * Dynamic explorer API
@@ -142,8 +157,12 @@ export async function POST(req: Request) {
       });
     }
 
-    const sourceCode = (data.SourceCode || "").toLowerCase();
-    const compilerVersion = data.CompilerVersion || "Unknown";
+    const sourceCode =
+      (data.SourceCode || "").toLowerCase();
+
+    const compilerVersion =
+      data.CompilerVersion || "Unknown";
+
     const verified = !!data.SourceCode;
 
     /**
@@ -191,24 +210,39 @@ export async function POST(req: Request) {
     } else if (isBluechip) {
       tokenType = "Bluechip Asset";
     } else {
-      if (sourceCode.includes("erc20")) tokenType = "ERC20";
-      if (sourceCode.includes("erc721")) tokenType = "ERC721";
+      if (sourceCode.includes("erc20")) {
+        tokenType = "ERC20";
+      }
+
+      if (sourceCode.includes("erc721")) {
+        tokenType = "ERC721";
+      }
     }
 
-    const findings = [];
+    const findings: string[] = [];
     let riskScore = 2;
 
     /**
      * Identity Layer
      */
 
-    findings.push(`Detected Chain: ${detectedChain.chainName}`);
-    findings.push(`Native Token: ${detectedChain.symbol}`);
-    findings.push(`Token Symbol: ${identity.symbol}`);
+    findings.push(
+      `Detected Chain: ${detectedChain.chainName}`
+    );
+
+    findings.push(
+      `Native Token: ${detectedChain.symbol}`
+    );
+
+    findings.push(
+      `Token Symbol: ${identity.symbol}`
+    );
 
     if (isStablecoin) {
       findings.push("Verified Stablecoin Detected");
-      findings.push("Institutional Asset Classification");
+      findings.push(
+        "Institutional Asset Classification"
+      );
 
       if (identity.symbol === "USDC") {
         findings.push("Issuer Verified: Circle");
@@ -219,12 +253,16 @@ export async function POST(req: Request) {
       }
 
       findings.push("Proxy Contract Verified");
-      findings.push("DEX Source: Institutional Liquidity");
+      findings.push(
+        "DEX Source: Institutional Liquidity"
+      );
     } else {
       findings.push(`DEX Source: ${identity.dex}`);
     }
 
-    findings.push(`Market Cap: ${identity.marketCap}`);
+    findings.push(
+      `Market Cap: ${identity.marketCap}`
+    );
 
     if (isStablecoin) {
       findings.push("Official Website Verified");
@@ -242,9 +280,17 @@ export async function POST(req: Request) {
      */
 
     if (dexInfo.found) {
-      findings.push(`DEX Pair Found: ${dexInfo.dex}`);
-      findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
-      findings.push(`24H Volume: ${dexInfo.volume24h}`);
+      findings.push(
+        `DEX Pair Found: ${dexInfo.dex}`
+      );
+
+      findings.push(
+        `Liquidity Present: ${dexInfo.liquidity}`
+      );
+
+      findings.push(
+        `24H Volume: ${dexInfo.volume24h}`
+      );
     } else {
       findings.push("No Active DEX Pair Found");
       findings.push("High Rug Pull Probability");
@@ -260,7 +306,9 @@ export async function POST(req: Request) {
     );
 
     if (holderRisk.risky && !isStablecoin) {
-      findings.push("High Holder Concentration Risk");
+      findings.push(
+        "High Holder Concentration Risk"
+      );
       riskScore += 3;
     } else {
       findings.push("Healthy Holder Distribution");
@@ -277,7 +325,9 @@ export async function POST(req: Request) {
         riskScore += 3;
       }
     } else {
-      findings.push("Institutional Liquidity Architecture");
+      findings.push(
+        "Institutional Liquidity Architecture"
+      );
     }
 
     /**
@@ -287,7 +337,9 @@ export async function POST(req: Request) {
     findings.push(...walletTrap.findings);
 
     if (walletTrap.risky && !isStablecoin) {
-      findings.push("Suspicious wallet trap behavior detected");
+      findings.push(
+        "Suspicious wallet trap behavior detected"
+      );
       riskScore += 2;
     }
 
@@ -300,12 +352,18 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    if (!isStablecoin && sourceCode.includes("blacklist")) {
+    if (
+      !isStablecoin &&
+      sourceCode.includes("blacklist")
+    ) {
       findings.push("Blacklist function detected");
       riskScore += 2;
     }
 
-    if (sourceCode.includes("owner") && !isStablecoin) {
+    if (
+      !isStablecoin &&
+      sourceCode.includes("owner")
+    ) {
       findings.push("Owner privileges detected");
       riskScore += 1;
     }
@@ -314,10 +372,14 @@ export async function POST(req: Request) {
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
     ) {
-      findings.push("Ownership renounce function exists");
+      findings.push(
+        "Ownership renounce function exists"
+      );
     } else {
       if (!isStablecoin) {
-        findings.push("Ownership renounce not detected");
+        findings.push(
+          "Ownership renounce not detected"
+        );
         riskScore += 2;
       }
     }
@@ -330,7 +392,10 @@ export async function POST(req: Request) {
       sourceCode.includes("selltax") ||
       sourceCode.includes("buytax");
 
-    if (hasSellRestriction && !isStablecoin) {
+    if (
+      hasSellRestriction &&
+      !isStablecoin
+    ) {
       findings.push(
         "Potential honeypot / sell restriction logic detected"
       );
@@ -375,11 +440,12 @@ export async function POST(req: Request) {
       rpcUrl
     );
 
-    const professionalScore = calculateRiskScore([
-      honeypotResult,
-      ownerResult,
-      liquidityResult,
-    ]);
+    const professionalScore =
+      calculateRiskScore([
+        honeypotResult,
+        ownerResult,
+        liquidityResult,
+      ]);
 
     const professionalReport =
       buildSecurityReport(professionalScore);
@@ -452,8 +518,11 @@ export async function POST(req: Request) {
 
       professionalReport,
 
-      rugPullProbability: rugPrediction.rugProbability,
-      rugPullRisk: rugPrediction.label,
+      rugPullProbability:
+        rugPrediction.rugProbability,
+
+      rugPullRisk:
+        rugPrediction.label,
 
       sbseScore: 10,
       findings,
