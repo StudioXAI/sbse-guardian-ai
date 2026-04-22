@@ -29,29 +29,37 @@ export async function POST(req: Request) {
 
     const sourceCode = (data.SourceCode || "").toLowerCase();
     const contractName = data.ContractName || "Unknown Project";
+    const compilerVersion = data.CompilerVersion || "Unknown";
+    const verified = data.SourceCode ? true : false;
+
+    let tokenType = "Unknown";
+
+    if (sourceCode.includes("erc20")) {
+      tokenType = "ERC20";
+    }
+
+    if (sourceCode.includes("erc721")) {
+      tokenType = "ERC721";
+    }
 
     const findings = [];
     let riskScore = 2;
 
-    // Mint Risk
     if (sourceCode.includes("mint")) {
       findings.push("Mint function detected");
       riskScore += 2;
     }
 
-    // Blacklist Risk
     if (sourceCode.includes("blacklist")) {
       findings.push("Blacklist function detected");
       riskScore += 2;
     }
 
-    // Owner Privileges
     if (sourceCode.includes("owner")) {
       findings.push("Owner privileges detected");
       riskScore += 1;
     }
 
-    // Ownership Renounce
     if (
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
@@ -62,28 +70,22 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    // Honeypot / Sell Trap Detection
     if (
       sourceCode.includes("maxwallet") ||
       sourceCode.includes("maxtx") ||
       sourceCode.includes("tradingenabled") ||
       sourceCode.includes("setfee") ||
       sourceCode.includes("selltax") ||
-      sourceCode.includes("buytax") ||
-      sourceCode.includes("pause") ||
-      sourceCode.includes("transferlimit")
+      sourceCode.includes("buytax")
     ) {
       findings.push("Potential honeypot / sell restriction logic detected");
       riskScore += 2;
     }
 
-    // LP / Liquidity Detection
     if (
       sourceCode.includes("liquidity") ||
-      sourceCode.includes("addliquidity") ||
-      sourceCode.includes("removeliquidity") ||
-      sourceCode.includes("uniswapv2pair") ||
-      sourceCode.includes("router")
+      sourceCode.includes("router") ||
+      sourceCode.includes("uniswapv2pair")
     ) {
       findings.push("Liquidity management logic detected");
     } else {
@@ -91,13 +93,10 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    // Proxy / Upgrade Backdoor Detection
     if (
       sourceCode.includes("delegatecall") ||
-      sourceCode.includes("upgrade") ||
       sourceCode.includes("implementation") ||
-      sourceCode.includes("proxyadmin") ||
-      sourceCode.includes("upgradeTo".toLowerCase())
+      sourceCode.includes("upgrade")
     ) {
       findings.push("Upgradeable proxy / backdoor risk detected");
       riskScore += 2;
@@ -107,18 +106,21 @@ export async function POST(req: Request) {
       success: true,
       project: contractName,
       contractAddress,
+      compilerVersion,
+      verified,
+      tokenType,
       riskScore: Math.min(riskScore, 10),
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This audit checks for rug pull patterns, honeypots, liquidity safety, and hidden upgradeable proxy risks where developers can change contract behavior after launch.",
+        "This report now includes identity detection, verification status, token type, and major rug-pull patterns including proxy risks and liquidity safety.",
     });
   } catch (error) {
     console.error(error);
 
     return NextResponse.json({
       success: false,
-      message: "Proxy scan failed",
+      message: "Intelligence scan failed",
     });
   }
 }
