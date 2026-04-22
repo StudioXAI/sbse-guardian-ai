@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { motion } from "framer-motion";
 import AuditVisualDashboard from "@/components/AuditVisualDashboard";
 
 export default function Home() {
@@ -95,17 +96,81 @@ export default function Home() {
                 <strong>Risk Score:</strong> {result.riskScore}/10
               </p>
 
-              <p>
-                <strong>SbSe Score:</strong> {result.sbseScore}+
-              </p>
+              {/* ONLY show shield if verified */}
+              {result.isSbSeVerified && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5 }}
+                  className="mt-6 rounded-3xl border border-green-400/30 bg-green-500/5 p-6 backdrop-blur-xl shadow-[0_0_40px_rgba(34,197,94,0.08)]"
+                >
+                  <div className="flex items-center gap-4">
+                    <div className="text-4xl">
+                      🛡
+                    </div>
 
-              <div className="mt-4">
+                    <div>
+                      <h3 className="text-2xl font-bold text-green-400">
+                        SbSe Shield Active
+                      </h3>
+
+                      <p className="text-white/70 mt-1">
+                        Protected by SbSe Protocol
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                      <p className="text-sm text-white/60">
+                        Verification Status
+                      </p>
+
+                      <p className="text-white font-semibold mt-1">
+                        Verified Launchpad Project
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-black/30 p-4">
+                      <p className="text-sm text-white/60">
+                        SbSe Score
+                      </p>
+
+                      <p className="text-green-400 font-bold text-xl mt-1">
+                        {result.sbseScore}+
+                      </p>
+                    </div>
+                  </div>
+
+                  <p className="mt-4 text-white/70">
+                    Enhanced Investor Protection Enabled
+                  </p>
+                </motion.div>
+              )}
+
+              {/* Optional warning for non-verified projects */}
+              {!result.isSbSeVerified && (
+                <div className="mt-6 rounded-2xl border border-yellow-400/20 bg-yellow-500/5 p-5">
+                  <p className="text-yellow-300 font-semibold">
+                    ⚠ This project is not currently verified by SbSe Protocol
+                  </p>
+
+                  <p className="text-white/60 mt-2 text-sm">
+                    This token is not listed on INFI MultiChain CDEX or the
+                    INFI Launchpad. Always perform additional due diligence.
+                  </p>
+                </div>
+              )}
+
+              <div className="mt-6">
                 <strong>Findings:</strong>
 
                 <ul className="list-disc ml-6 mt-2">
-                  {result.findings?.map((item: string, index: number) => (
-                    <li key={index}>{item}</li>
-                  ))}
+                  {result.findings?.map(
+                    (item: string, index: number) => (
+                      <li key={index}>{item}</li>
+                    )
+                  )}
                 </ul>
               </div>
 
