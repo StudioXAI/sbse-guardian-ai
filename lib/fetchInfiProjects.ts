@@ -1,8 +1,5 @@
 export async function fetchInfiProjects() {
   try {
-    // TEMP version using your known protected projects
-    // Later we replace this with full API integration
-
     return [
       {
         name: "People Token",
