@@ -1,12 +1,14 @@
 /* ─────────────────────────────────────────────────────────────
    Universal Chain Detection Engine
    Strategy:
-   - Etherscan V2 supports 35 mainnets via one unified endpoint.
-   - Rather than fire 35 parallel requests (rate-limit suicide on
-     free tier), we run a concurrency-limited worker pool that
-     scans in priority order (tier 1 → 2 → 3) and stops on the
-     first hit.
-   - RPC fallback runs only if no explorer returns a match.
+   - Use Etherscan V2's `eth_getCode` proxy endpoint instead of
+     `getsourcecode`. `eth_getCode` returns only the deployed
+     bytecode length indicator — tiny response, uniform across
+     all chains regardless of source verification, and far less
+     likely to trigger 502s under burst load.
+   - Tiered scan: tier 1 (popular) first, then 2, then 3.
+   - Concurrency capped at 5 to stay under free-tier limits.
+   - First match wins; remaining probes are abandoned.
    ───────────────────────────────────────────────────────────── */
 
 import {
@@ -14,16 +16,14 @@ import {
   getExplorerApiKey,
   type ChainEntry,
 } from "./chainRegistry";
-import { fetchJson, rpcCall, type ChainInfo } from "./fetchHelpers";
-import { RPC_TIMEOUT_MS, debug } from "./constants";
+import { fetchJson, type ChainInfo } from "./fetchHelpers";
+import { debug } from "./constants";
 
 export interface DetectedChain extends ChainInfo {
   found: boolean;
 }
 
-/** How many explorer probes to run in parallel. Free-tier safe (5/sec). */
 const MAX_CONCURRENCY = 5;
-
 const DEFAULT_RPC = "https://eth.llamarpc.com";
 
 function toChainInfo(chain: ChainEntry, scannerType: string): ChainInfo {
@@ -39,6 +39,11 @@ function toChainInfo(chain: ChainEntry, scannerType: string): ChainInfo {
   };
 }
 
+/**
+ * Check if a contract exists on a specific chain using the
+ * explorer's eth_getCode proxy endpoint. Returns ChainInfo on
+ * match, null on miss, null on error.
+ */
 async function probeExplorer(
   chain: ChainEntry,
   contractAddress: string,
@@ -49,50 +54,29 @@ async function probeExplorer(
 
     const url =
       `${chain.explorerApi}?chainid=${chain.chainIdNum}` +
-      `&module=contract&action=getsourcecode` +
-      `&address=${contractAddress}&apikey=${apiKey}`;
+      `&module=proxy&action=eth_getCode` +
+      `&address=${contractAddress}&tag=latest&apikey=${apiKey}`;
 
-    const data = await fetchJson<any>(url, 8_000);
-    const result = data?.result?.[0];
+    const data = await fetchJson<{ result?: string; error?: unknown }>(url, 7_000);
+    const code = data?.result;
 
-    const hasContract =
-      !!result &&
-      (!!result.ContractName || !!result.SourceCode || !!result.ABI) &&
-      result.ABI !== "Contract source code not verified" &&
-      result.ABI !== "Invalid Address format";
+    // `0x` or short => no contract at this address on this chain.
+    // Any non-trivial bytecode => contract exists.
+    if (!code || typeof code !== "string" || code.length < 4 || code === "0x") {
+      return null;
+    }
 
-    if (!hasContract) return null;
-    return toChainInfo(chain, "Explorer API");
+    return toChainInfo(chain, "Explorer eth_getCode");
   } catch {
     debug("Explorer probe failed:", chain.name);
     return null;
   }
 }
 
-async function probeRpc(
-  chain: ChainEntry,
-  contractAddress: string,
-): Promise<ChainInfo | null> {
-  try {
-    if (!chain.rpc) return null;
-    const code = await rpcCall<string>(
-      chain.rpc,
-      "eth_getCode",
-      [contractAddress, "latest"],
-      RPC_TIMEOUT_MS,
-    );
-    if (!code || code === "0x" || code.length <= 10) return null;
-    return toChainInfo(chain, "RPC Detection");
-  } catch {
-    debug("RPC probe failed:", chain.name);
-    return null;
-  }
-}
-
 /**
- * Concurrency-limited worker pool.
- * Processes `items` in order, up to `concurrency` at a time.
- * Returns as soon as any worker finds a match; remaining work is abandoned.
+ * Concurrency-limited race.
+ * Processes items in `items` order, up to `concurrency` in flight.
+ * Resolves with the first non-null result; remaining probes are abandoned.
  */
 async function raceWithLimit<T>(
   items: ChainEntry[],
@@ -114,8 +98,9 @@ async function raceWithLimit<T>(
     }
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () =>
-    worker(),
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => worker(),
   );
   await Promise.all(workers);
   return winner;
@@ -124,26 +109,16 @@ async function raceWithLimit<T>(
 export async function detectChain(
   contractAddress: string,
 ): Promise<DetectedChain> {
-  /* ── Explorer detection (tiered) ── */
   /* Sort by tier so popular chains get checked first. */
   const sorted = [...CHAIN_REGISTRY].sort((a, b) => a.tier - b.tier);
 
-  const explorerHit = await raceWithLimit(
+  const hit = await raceWithLimit(
     sorted,
     (c) => probeExplorer(c, contractAddress),
     MAX_CONCURRENCY,
   );
-  if (explorerHit) return { ...explorerHit, found: true };
 
-  /* ── RPC fallback (tier 1 only — only popular chains have reliable public RPCs) ── */
-  const tier1 = CHAIN_REGISTRY.filter((c) => c.tier === 1 && c.rpc);
-  const rpcHit = await raceWithLimit(
-    tier1,
-    (c) => probeRpc(c, contractAddress),
-    3,
-  );
-  if (rpcHit) return { ...rpcHit, found: true };
+  if (hit) return { ...hit, found: true };
 
-  /* ── Not found anywhere ── */
   return { ...toChainInfo(CHAIN_REGISTRY[0], "Fallback"), found: false };
 }
