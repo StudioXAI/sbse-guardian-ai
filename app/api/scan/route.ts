@@ -1,6 +1,7 @@
 import { fetchInfiProjects } from "@/lib/fetchInfiProjects";
 import { checkDexPair } from "@/lib/checkDexPair";
 import { checkHolderRisk } from "@/lib/checkHolderRisk";
+import { fetchTokenIdentity } from "@/lib/fetchTokenIdentity";
 import { NextResponse } from "next/server";
 import axios from "axios";
 
@@ -45,10 +46,13 @@ export async function POST(req: Request) {
       });
     }
 
-    // Real DEX Pair Detection
+    // Smart Identity Engine
+    const identity = await fetchTokenIdentity(contractAddress);
+
+    // DEX Detection
     const dexInfo = await checkDexPair(contractAddress);
 
-    // Holder Concentration Detection
+    // Holder Risk
     const holderRisk = await checkHolderRisk(contractAddress);
 
     const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -66,7 +70,6 @@ export async function POST(req: Request) {
     }
 
     const sourceCode = (data.SourceCode || "").toLowerCase();
-    const contractName = data.ContractName || "Unknown Project";
     const compilerVersion = data.CompilerVersion || "Unknown";
     const verified = !!data.SourceCode;
 
@@ -78,7 +81,19 @@ export async function POST(req: Request) {
     const findings = [];
     let riskScore = 2;
 
-    // DEX Intelligence
+    // Identity Layer
+    findings.push(`Token Symbol: ${identity.symbol}`);
+    findings.push(`DEX Source: ${identity.dex}`);
+    findings.push(`Market Cap: ${identity.marketCap}`);
+
+    if (identity.website) {
+      findings.push(`Website Found`);
+    } else {
+      findings.push("No Website Detected");
+      riskScore += 1;
+    }
+
+    // DEX Layer
     if (dexInfo.found) {
       findings.push(`DEX Pair Found: ${dexInfo.dex}`);
       findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
@@ -89,7 +104,7 @@ export async function POST(req: Request) {
       riskScore += 3;
     }
 
-    // Holder Concentration Intelligence
+    // Holder Layer
     findings.push(
       `Top Holder Controls ${holderRisk.topHolderPercent}%`
     );
@@ -143,7 +158,7 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    // Advanced LP Detection
+    // LP Detection
     if (
       sourceCode.includes("liquidity") ||
       sourceCode.includes("router") ||
@@ -180,7 +195,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      project: contractName,
+      project: identity.projectName,
       contractAddress,
       compilerVersion,
       verified,
@@ -188,8 +203,9 @@ export async function POST(req: Request) {
       riskScore: Math.min(riskScore, 10),
       sbseScore: 10,
       findings,
+      website: identity.website,
       beginnerExplanation:
-        "This report now includes DEX verification, liquidity intelligence, holder concentration analysis, rug-pull patterns, proxy risks, and dynamic SbSe Shield verification.",
+        "This report now includes smart token identity detection, DEX verification, holder concentration analysis, liquidity intelligence, proxy detection, and dynamic SbSe Shield verification.",
     });
   } catch (error) {
     console.error(error);
