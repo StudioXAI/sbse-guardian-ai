@@ -17,17 +17,44 @@ export async function POST(req: Request) {
       });
     }
 
-    // Dynamic INFI Shield Verification
+    /**
+     * STEP 1
+     * Smart Identity Engine FIRST
+     * We need token identity before SbSe verification
+     */
+    const identity = await fetchTokenIdentity(contractAddress);
+    const tokenSymbol = identity.symbol || "";
+
+    /**
+     * STEP 2
+     * Dynamic INFI Shield Verification
+     * Contract match + Project identity match
+     */
     const infiProjects = await fetchInfiProjects();
 
-    const matchedProject = infiProjects.find(
-      (project) =>
-        project.contract.toLowerCase() === contractAddress.toLowerCase()
-    );
+    const matchedProject = infiProjects.find((project) => {
+      const contractMatch =
+        project.contract &&
+        project.contract.toLowerCase() ===
+          contractAddress.toLowerCase();
 
+      const projectNameMatch =
+        tokenSymbol &&
+        project.name &&
+        project.name
+          .toLowerCase()
+          .includes(tokenSymbol.toLowerCase());
+
+      return contractMatch || projectNameMatch;
+    });
+
+    /**
+     * VERIFIED PROJECT
+     */
     if (matchedProject) {
       return NextResponse.json({
         success: true,
+        isSbSeVerified: true,
         project: matchedProject.name,
         contractAddress,
         verified: true,
@@ -46,8 +73,10 @@ export async function POST(req: Request) {
       });
     }
 
-    // Smart Identity Engine
-    const identity = await fetchTokenIdentity(contractAddress);
+    /**
+     * STEP 3
+     * Continue deep analysis for non-verified projects
+     */
 
     // DEX Detection
     const dexInfo = await checkDexPair(contractAddress);
@@ -81,7 +110,9 @@ export async function POST(req: Request) {
     const findings = [];
     let riskScore = 2;
 
-    // Identity Layer
+    /**
+     * Identity Layer
+     */
     findings.push(`Token Symbol: ${identity.symbol}`);
     findings.push(`DEX Source: ${identity.dex}`);
     findings.push(`Market Cap: ${identity.marketCap}`);
@@ -93,7 +124,9 @@ export async function POST(req: Request) {
       riskScore += 1;
     }
 
-    // DEX Layer
+    /**
+     * DEX Layer
+     */
     if (dexInfo.found) {
       findings.push(`DEX Pair Found: ${dexInfo.dex}`);
       findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
@@ -104,7 +137,9 @@ export async function POST(req: Request) {
       riskScore += 3;
     }
 
-    // Holder Layer
+    /**
+     * Holder Layer
+     */
     findings.push(
       `Top Holder Controls ${holderRisk.topHolderPercent}%`
     );
@@ -116,25 +151,33 @@ export async function POST(req: Request) {
       findings.push("Healthy Holder Distribution");
     }
 
-    // Mint Detection
+    /**
+     * Mint Detection
+     */
     if (sourceCode.includes("mint")) {
       findings.push("Mint function detected");
       riskScore += 2;
     }
 
-    // Blacklist Detection
+    /**
+     * Blacklist Detection
+     */
     if (sourceCode.includes("blacklist")) {
       findings.push("Blacklist function detected");
       riskScore += 2;
     }
 
-    // Owner Privileges
+    /**
+     * Owner Privileges
+     */
     if (sourceCode.includes("owner")) {
       findings.push("Owner privileges detected");
       riskScore += 1;
     }
 
-    // Ownership Renounce
+    /**
+     * Ownership Renounce
+     */
     if (
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
@@ -145,7 +188,9 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    // Honeypot Detection
+    /**
+     * Honeypot Detection
+     */
     if (
       sourceCode.includes("maxwallet") ||
       sourceCode.includes("maxtx") ||
@@ -154,11 +199,15 @@ export async function POST(req: Request) {
       sourceCode.includes("selltax") ||
       sourceCode.includes("buytax")
     ) {
-      findings.push("Potential honeypot / sell restriction logic detected");
+      findings.push(
+        "Potential honeypot / sell restriction logic detected"
+      );
       riskScore += 2;
     }
 
-    // LP Detection
+    /**
+     * LP Detection
+     */
     if (
       sourceCode.includes("liquidity") ||
       sourceCode.includes("router") ||
@@ -173,7 +222,9 @@ export async function POST(req: Request) {
         sourceCode.includes("removeliquidity") ||
         sourceCode.includes("withdrawliquidity")
       ) {
-        findings.push("Liquidity removable by owner — Rug risk increased");
+        findings.push(
+          "Liquidity removable by owner — Rug risk increased"
+        );
         riskScore += 3;
       } else {
         findings.push("Basic liquidity presence detected");
@@ -183,18 +234,26 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    // Proxy Detection
+    /**
+     * Proxy Detection
+     */
     if (
       sourceCode.includes("delegatecall") ||
       sourceCode.includes("implementation") ||
       sourceCode.includes("upgrade")
     ) {
-      findings.push("Upgradeable proxy / backdoor risk detected");
+      findings.push(
+        "Upgradeable proxy / backdoor risk detected"
+      );
       riskScore += 2;
     }
 
+    /**
+     * FINAL RESPONSE
+     */
     return NextResponse.json({
       success: true,
+      isSbSeVerified: false,
       project: identity.projectName,
       contractAddress,
       compilerVersion,

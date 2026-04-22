@@ -1,24 +1,108 @@
+import axios from "axios";
+
+const API_BASE =
+  "https://launchpad.infimultichain.com/users";
+
 export async function fetchInfiProjects() {
   try {
-    return [
-      {
-        name: "People Token",
-        contract: "0x3f030ca10775158b07ca6b02c3fc1a08bb7e1f95",
-        status: "Listed",
-      },
-      {
-        name: "Gima Trust Token",
-        contract: "0x41c1DaDbcF99C307c5fd1E95c6BB9f5E503068daF",
-        status: "Active Presale",
-      },
-      {
-        name: "Hiring Plug",
-        contract: "0xCE8943Db45a961E9805b82E5ffc2301BB9aED4eF",
-        status: "Active Presale",
-      },
+    console.log(
+      "Loading INFI projects from official launchpad backend..."
+    );
+
+    const [listedRes, upcomingRes] = await Promise.all([
+      axios.get(
+        `${API_BASE}/getAllListedApplicationForms`,
+        {
+          timeout: 20000,
+        }
+      ),
+      axios.get(
+        `${API_BASE}/getAllUpcommingApplicationForms`,
+        {
+          timeout: 20000,
+        }
+      ),
+    ]);
+
+    /*
+      REAL structure:
+      data.data.liquidityApplications
+      data.data.presaleApplications
+    */
+
+    const listed =
+      listedRes?.data?.data?.liquidityApplications || [];
+
+    const listedPresales =
+      listedRes?.data?.data?.presaleApplications || [];
+
+    const upcoming =
+      upcomingRes?.data?.data?.presaleApplications || [];
+
+    console.log(
+      `Listed liquidity projects found: ${listed.length}`
+    );
+
+    console.log(
+      `Listed presales found: ${listedPresales.length}`
+    );
+
+    console.log(
+      `Upcoming presales found: ${upcoming.length}`
+    );
+
+    const allProjects = [
+      ...listed,
+      ...listedPresales,
+      ...upcoming,
     ];
+
+    const uniqueMap = new Map();
+
+    for (const project of allProjects) {
+      if (
+        !project?.token_address ||
+        !project?.token_name
+      ) {
+        continue;
+      }
+
+      uniqueMap.set(
+        project.token_address.toLowerCase(),
+        {
+          id: project.id,
+          name: project.token_name,
+          symbol: project.token_symbol,
+          contract: project.token_address,
+          owner: project.owner_address,
+          chain: project.chainName,
+          type: project.type,
+          liquidity: project.liquidity,
+          listed: project.is_listed === 1,
+          featured: project.is_feature === 1,
+          active: project.is_active === 1,
+          website: project.website,
+          status: "verified",
+          source: "INFI Official Backend",
+        }
+      );
+    }
+
+    const verifiedProjects = Array.from(
+      uniqueMap.values()
+    );
+
+    console.log(
+      `Total verified INFI projects loaded: ${verifiedProjects.length}`
+    );
+
+    return verifiedProjects;
   } catch (error) {
-    console.error("INFI project fetch failed:", error);
+    console.error(
+      "INFI project loading failed:",
+      error
+    );
+
     return [];
   }
 }
