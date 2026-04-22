@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import AuditVisualDashboard from "@/components/AuditVisualDashboard";
 
 export default function Home() {
   const [contractAddress, setContractAddress] = useState("");
@@ -86,12 +87,21 @@ export default function Home() {
                 Audit Report
               </h4>
 
-              <p><strong>Project:</strong> {result.project}</p>
-              <p><strong>Risk Score:</strong> {result.riskScore}/10</p>
-              <p><strong>SbSe Score:</strong> {result.sbseScore}+</p>
+              <p>
+                <strong>Project:</strong> {result.project}
+              </p>
+
+              <p>
+                <strong>Risk Score:</strong> {result.riskScore}/10
+              </p>
+
+              <p>
+                <strong>SbSe Score:</strong> {result.sbseScore}+
+              </p>
 
               <div className="mt-4">
                 <strong>Findings:</strong>
+
                 <ul className="list-disc ml-6 mt-2">
                   {result.findings?.map((item: string, index: number) => (
                     <li key={index}>{item}</li>
@@ -105,6 +115,11 @@ export default function Home() {
             </div>
           )}
         </div>
+      </section>
+
+      {/* Professional Visual Dashboard */}
+      <section className="max-w-7xl mx-auto px-6 pb-24">
+        <AuditVisualDashboard />
       </section>
     </main>
   );
