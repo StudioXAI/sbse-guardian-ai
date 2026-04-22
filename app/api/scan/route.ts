@@ -1,3 +1,4 @@
+import { infiProjects } from "@/lib/infiProjects";
 import { NextResponse } from "next/server";
 import axios from "axios";
 
@@ -10,6 +11,33 @@ export async function POST(req: Request) {
       return NextResponse.json({
         success: false,
         message: "No contract address provided",
+      });
+    }
+
+    const matchedProject = infiProjects.find(
+      (project) =>
+        project.contract.toLowerCase() === contractAddress.toLowerCase()
+    );
+
+    // INFI Shield Protected Project Detection
+    if (matchedProject) {
+      return NextResponse.json({
+        success: true,
+        project: matchedProject.name,
+        contractAddress,
+        verified: true,
+        tokenType: "Protected Launchpad Project",
+        riskScore: 1,
+        sbseScore: "10+",
+        findings: [
+          "🟢 SbSe Shield Active",
+          `Listed on INFI MultiChain CDEX (${matchedProject.status})`,
+          "Verified launchpad project",
+          "Enhanced investor protection enabled",
+          "Protected by SbSe Protocol",
+        ],
+        beginnerExplanation:
+          "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system. Investors receive stronger protection and trust visibility.",
       });
     }
 
@@ -113,7 +141,7 @@ export async function POST(req: Request) {
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This report now includes identity detection, verification status, token type, and major rug-pull patterns including proxy risks and liquidity safety.",
+        "This report includes identity detection, verification status, token type, rug-pull patterns, proxy risks, liquidity safety, and SbSe Shield verification when applicable.",
     });
   } catch (error) {
     console.error(error);
