@@ -41,10 +41,7 @@ export async function POST(req: Request) {
       });
     }
 
-    console.log(
-      "Detected chain:",
-      detectedChain.chainName
-    );
+    console.log("Detected chain:", detectedChain.chainName);
 
     /**
      * STEP 1
@@ -124,10 +121,8 @@ export async function POST(req: Request) {
 
     const dexInfo = await checkDexPair(contractAddress);
     const holderRisk = await checkHolderRisk(contractAddress);
-    const liquidityLock =
-      await checkLiquidityLock(contractAddress);
-    const walletTrap =
-      await checkWalletTraps(contractAddress);
+    const liquidityLock = await checkLiquidityLock(contractAddress);
+    const walletTrap = await checkWalletTraps(contractAddress);
 
     /**
      * Dynamic explorer API
@@ -147,21 +142,14 @@ export async function POST(req: Request) {
       });
     }
 
-    const sourceCode =
-      (data.SourceCode || "").toLowerCase();
-
-    const compilerVersion =
-      data.CompilerVersion || "Unknown";
-
+    const sourceCode = (data.SourceCode || "").toLowerCase();
+    const compilerVersion = data.CompilerVersion || "Unknown";
     const verified = !!data.SourceCode;
 
     let tokenType = "Unknown";
 
-    if (sourceCode.includes("erc20"))
-      tokenType = "ERC20";
-
-    if (sourceCode.includes("erc721"))
-      tokenType = "ERC721";
+    if (sourceCode.includes("erc20")) tokenType = "ERC20";
+    if (sourceCode.includes("erc721")) tokenType = "ERC721";
 
     const findings = [];
     let riskScore = 2;
@@ -189,12 +177,8 @@ export async function POST(req: Request) {
 
     if (dexInfo.found) {
       findings.push(`DEX Pair Found: ${dexInfo.dex}`);
-      findings.push(
-        `Liquidity Present: ${dexInfo.liquidity}`
-      );
-      findings.push(
-        `24H Volume: ${dexInfo.volume24h}`
-      );
+      findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
+      findings.push(`24H Volume: ${dexInfo.volume24h}`);
     } else {
       findings.push("No Active DEX Pair Found");
       findings.push("High Rug Pull Probability");
@@ -233,9 +217,7 @@ export async function POST(req: Request) {
     findings.push(...walletTrap.findings);
 
     if (walletTrap.risky) {
-      findings.push(
-        "Suspicious wallet trap behavior detected"
-      );
+      findings.push("Suspicious wallet trap behavior detected");
       riskScore += 2;
     }
 
@@ -262,13 +244,9 @@ export async function POST(req: Request) {
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
     ) {
-      findings.push(
-        "Ownership renounce function exists"
-      );
+      findings.push("Ownership renounce function exists");
     } else {
-      findings.push(
-        "Ownership renounce not detected"
-      );
+      findings.push("Ownership renounce not detected");
       riskScore += 2;
     }
 
@@ -300,9 +278,13 @@ export async function POST(req: Request) {
 
     /**
      * Professional Analyzer Engine
+     * FIXED FOR VERCEL
      */
 
-    const rpcUrl = detectedChain.rpc;
+    const rpcUrl =
+      detectedChain.rpc ||
+      process.env.NEXT_PUBLIC_ETH_RPC_URL ||
+      "https://eth.llamarpc.com";
 
     const honeypotResult = await honeypotCheck(
       contractAddress,
@@ -319,12 +301,11 @@ export async function POST(req: Request) {
       rpcUrl
     );
 
-    const professionalScore =
-      calculateRiskScore([
-        honeypotResult,
-        ownerResult,
-        liquidityResult,
-      ]);
+    const professionalScore = calculateRiskScore([
+      honeypotResult,
+      ownerResult,
+      liquidityResult,
+    ]);
 
     const professionalReport =
       buildSecurityReport(professionalScore);
@@ -370,19 +351,12 @@ export async function POST(req: Request) {
 
       riskScore: Math.min(riskScore, 10),
 
-      professionalScore:
-        professionalScore.score,
-
-      professionalLabel:
-        professionalScore.label,
-
+      professionalScore: professionalScore.score,
+      professionalLabel: professionalScore.label,
       professionalReport,
 
-      rugPullProbability:
-        rugPrediction.rugProbability,
-
-      rugPullRisk:
-        rugPrediction.label,
+      rugPullProbability: rugPrediction.rugProbability,
+      rugPullRisk: rugPrediction.label,
 
       sbseScore: 10,
       findings,
