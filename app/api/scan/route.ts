@@ -33,21 +33,25 @@ export async function POST(req: Request) {
     const findings = [];
     let riskScore = 2;
 
+    // Mint Risk
     if (sourceCode.includes("mint")) {
       findings.push("Mint function detected");
       riskScore += 2;
     }
 
+    // Blacklist Risk
     if (sourceCode.includes("blacklist")) {
       findings.push("Blacklist function detected");
       riskScore += 2;
     }
 
+    // Owner Privileges
     if (sourceCode.includes("owner")) {
       findings.push("Owner privileges detected");
       riskScore += 1;
     }
 
+    // Ownership Renounce
     if (
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
@@ -55,6 +59,21 @@ export async function POST(req: Request) {
       findings.push("Ownership renounce function exists");
     } else {
       findings.push("Ownership renounce not detected");
+      riskScore += 2;
+    }
+
+    // Honeypot / Sell Trap Detection
+    if (
+      sourceCode.includes("maxwallet") ||
+      sourceCode.includes("maxtx") ||
+      sourceCode.includes("tradingenabled") ||
+      sourceCode.includes("setfee") ||
+      sourceCode.includes("selltax") ||
+      sourceCode.includes("buytax") ||
+      sourceCode.includes("pause") ||
+      sourceCode.includes("transferlimit")
+    ) {
+      findings.push("Potential honeypot / sell restriction logic detected");
       riskScore += 2;
     }
 
@@ -70,14 +89,14 @@ export async function POST(req: Request) {
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This audit checks for mint access, blacklist risks, owner privileges, and whether ownership can be renounced — one of the strongest investor safety indicators.",
+        "This audit checks for mint access, blacklist risks, ownership safety, and common honeypot patterns where users can buy but may face restrictions when trying to sell.",
     });
   } catch (error) {
     console.error(error);
 
     return NextResponse.json({
       success: false,
-      message: "Advanced scan failed",
+      message: "Honeypot scan failed",
     });
   }
 }
