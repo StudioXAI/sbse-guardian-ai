@@ -1,5 +1,6 @@
 import { fetchInfiProjects } from "@/lib/fetchInfiProjects";
 import { checkDexPair } from "@/lib/checkDexPair";
+import { checkHolderRisk } from "@/lib/checkHolderRisk";
 import { NextResponse } from "next/server";
 import axios from "axios";
 
@@ -23,7 +24,6 @@ export async function POST(req: Request) {
         project.contract.toLowerCase() === contractAddress.toLowerCase()
     );
 
-    // INFI Shield Protected Project Detection
     if (matchedProject) {
       return NextResponse.json({
         success: true,
@@ -41,12 +41,15 @@ export async function POST(req: Request) {
           "Protected by SbSe Protocol",
         ],
         beginnerExplanation:
-          "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system. Investors receive stronger protection and trust visibility.",
+          "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system.",
       });
     }
 
-    // REAL DEX Pair Detection
+    // Real DEX Pair Detection
     const dexInfo = await checkDexPair(contractAddress);
+
+    // Holder Concentration Detection
+    const holderRisk = await checkHolderRisk(contractAddress);
 
     const apiKey = process.env.ETHERSCAN_API_KEY;
 
@@ -65,22 +68,17 @@ export async function POST(req: Request) {
     const sourceCode = (data.SourceCode || "").toLowerCase();
     const contractName = data.ContractName || "Unknown Project";
     const compilerVersion = data.CompilerVersion || "Unknown";
-    const verified = data.SourceCode ? true : false;
+    const verified = !!data.SourceCode;
 
     let tokenType = "Unknown";
 
-    if (sourceCode.includes("erc20")) {
-      tokenType = "ERC20";
-    }
-
-    if (sourceCode.includes("erc721")) {
-      tokenType = "ERC721";
-    }
+    if (sourceCode.includes("erc20")) tokenType = "ERC20";
+    if (sourceCode.includes("erc721")) tokenType = "ERC721";
 
     const findings = [];
     let riskScore = 2;
 
-    // DEX Pair Intelligence
+    // DEX Intelligence
     if (dexInfo.found) {
       findings.push(`DEX Pair Found: ${dexInfo.dex}`);
       findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
@@ -89,6 +87,18 @@ export async function POST(req: Request) {
       findings.push("No Active DEX Pair Found");
       findings.push("High Rug Pull Probability");
       riskScore += 3;
+    }
+
+    // Holder Concentration Intelligence
+    findings.push(
+      `Top Holder Controls ${holderRisk.topHolderPercent}%`
+    );
+
+    if (holderRisk.risky) {
+      findings.push("High Holder Concentration Risk");
+      riskScore += 3;
+    } else {
+      findings.push("Healthy Holder Distribution");
     }
 
     // Mint Detection
@@ -109,7 +119,7 @@ export async function POST(req: Request) {
       riskScore += 1;
     }
 
-    // Ownership Renounce Detection
+    // Ownership Renounce
     if (
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
@@ -158,7 +168,7 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    // Proxy / Backdoor Detection
+    // Proxy Detection
     if (
       sourceCode.includes("delegatecall") ||
       sourceCode.includes("implementation") ||
@@ -179,7 +189,7 @@ export async function POST(req: Request) {
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This report includes identity detection, verification status, token type, live DEX liquidity verification, rug-pull patterns, advanced liquidity risk detection, proxy risks, and dynamic SbSe Shield verification when applicable.",
+        "This report now includes DEX verification, liquidity intelligence, holder concentration analysis, rug-pull patterns, proxy risks, and dynamic SbSe Shield verification.",
     });
   } catch (error) {
     console.error(error);
