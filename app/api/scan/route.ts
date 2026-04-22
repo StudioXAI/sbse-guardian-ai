@@ -91,6 +91,18 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
+    // Proxy / Upgrade Backdoor Detection
+    if (
+      sourceCode.includes("delegatecall") ||
+      sourceCode.includes("upgrade") ||
+      sourceCode.includes("implementation") ||
+      sourceCode.includes("proxyadmin") ||
+      sourceCode.includes("upgradeTo".toLowerCase())
+    ) {
+      findings.push("Upgradeable proxy / backdoor risk detected");
+      riskScore += 2;
+    }
+
     return NextResponse.json({
       success: true,
       project: contractName,
@@ -99,14 +111,14 @@ export async function POST(req: Request) {
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This audit checks ownership safety, honeypot risks, and liquidity protection. If liquidity is not locked or removable, rug pull risk becomes significantly higher.",
+        "This audit checks for rug pull patterns, honeypots, liquidity safety, and hidden upgradeable proxy risks where developers can change contract behavior after launch.",
     });
   } catch (error) {
     console.error(error);
 
     return NextResponse.json({
       success: false,
-      message: "Liquidity scan failed",
+      message: "Proxy scan failed",
     });
   }
 }
