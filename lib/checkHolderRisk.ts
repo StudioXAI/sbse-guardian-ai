@@ -1,127 +1,63 @@
-import axios from "axios";
+/* ─────────────────────────────────────────────────────────────
+   Holder Risk Analysis
+   - ChainInfo-aware: no more hardcoded etherscan.io
+   - Shared INSTITUTIONAL_TOKENS via isInstitutional()
+   - Native fetch with timeout
+   ───────────────────────────────────────────────────────────── */
 
-const INSTITUTIONAL_TOKENS = [
-  "USDC",
-  "USDT",
-  "DAI",
-  "WBTC",
-  "WETH",
-  "ETH",
-  "BTC",
-  "FRAX",
-  "TUSD",
-  "FDUSD",
-  "PYUSD",
-];
+import { isInstitutional, debug } from "./constants";
+import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
+
+export interface HolderRiskResult {
+  risky: boolean;
+  topHolderPercent: number;
+  message: string;
+}
 
 export async function checkHolderRisk(
   contractAddress: string,
-  symbol?: string
-) {
+  chain: ChainInfo,
+  symbol?: string,
+): Promise<HolderRiskResult> {
   try {
-    /**
-     * STEP 1
-     * Stablecoins + bluechips should NOT trigger false holder risk
-     */
-
-    if (
-      symbol &&
-      INSTITUTIONAL_TOKENS.includes(
-        symbol.toUpperCase()
-      )
-    ) {
+    if (isInstitutional(symbol)) {
       return {
         risky: false,
         topHolderPercent: 5,
-        message:
-          "Institutional holder structure detected",
+        message: "Institutional holder structure detected",
       };
     }
 
-    /**
-     * STEP 2
-     * Real holder analysis using explorer endpoint
-     *
-     * IMPORTANT:
-     * Use percentage field
-     * NOT TokenHolderQuantity
-     */
+    const url = explorerUrl(chain, {
+      module: "token",
+      action: "tokenholderlist",
+      contractaddress: contractAddress,
+      page: "1",
+      offset: "10",
+    });
 
-    const apiKey = process.env.ETHERSCAN_API_KEY;
-
-    const url = `https://api.etherscan.io/api?module=token&action=tokenholderlist&contractaddress=${contractAddress}&page=1&offset=10&apikey=${apiKey}`;
-
-    const response = await axios.get(url);
-
-    const holders =
-      response.data?.result || [];
+    const data = await fetchJson<any>(url);
+    const holders = Array.isArray(data?.result) ? data.result : [];
 
     if (!holders.length) {
       return {
         risky: true,
         topHolderPercent: 0,
-        message:
-          "Unable to fetch holder concentration data",
+        message: "Unable to fetch holder concentration data",
       };
     }
 
-    /**
-     * FIX:
-     * percentage is the correct field
-     */
+    const topHolderPercent = Number(holders[0]?.percentage || 0);
 
-    const topHolderPercent = Number(
-      holders[0]?.percentage || 0
-    );
-
-    /**
-     * Risk thresholds
-     */
-
-    if (topHolderPercent >= 50) {
-      return {
-        risky: true,
-        topHolderPercent,
-        message:
-          "Critical whale concentration detected",
-      };
-    }
-
-    if (topHolderPercent >= 25) {
-      return {
-        risky: true,
-        topHolderPercent,
-        message:
-          "High holder concentration detected",
-      };
-    }
-
-    if (topHolderPercent >= 10) {
-      return {
-        risky: false,
-        topHolderPercent,
-        message:
-          "Moderate holder concentration detected",
-      };
-    }
-
-    return {
-      risky: false,
-      topHolderPercent,
-      message:
-        "Healthy decentralized holder distribution",
-    };
+    if (topHolderPercent >= 50)
+      return { risky: true, topHolderPercent, message: "Critical whale concentration" };
+    if (topHolderPercent >= 25)
+      return { risky: true, topHolderPercent, message: "High holder concentration" };
+    if (topHolderPercent >= 10)
+      return { risky: false, topHolderPercent, message: "Moderate holder concentration" };
+    return { risky: false, topHolderPercent, message: "Healthy decentralized distribution" };
   } catch (error) {
-    console.error(
-      "Holder analysis failed:",
-      error
-    );
-
-    return {
-      risky: true,
-      topHolderPercent: 0,
-      message:
-        "Holder analysis unavailable",
-    };
+    debug("Holder analysis failed:", error);
+    return { risky: true, topHolderPercent: 0, message: "Holder analysis unavailable" };
   }
 }

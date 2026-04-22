@@ -1,61 +1,33 @@
-type CheckResult = {
-  safe: boolean;
-  risk: string;
-  message: string;
-  scoreImpact: number;
-};
+/* ─────────────────────────────────────────────────────────────
+   Professional report text builder.
+   Used in the `professionalReport` string returned by the API.
+   ───────────────────────────────────────────────────────────── */
 
-type FinalReport = {
-  score: number;
-  label: string;
-  checks: CheckResult[];
-};
+import type { ProfessionalScore } from "./riskScore";
 
-export function buildSecurityReport(
-  report: FinalReport
-) {
-  const safeItems: string[] = [];
-  const warningItems: string[] = [];
-  const dangerItems: string[] = [];
+export function buildSecurityReport(report: ProfessionalScore): string {
+  const safe: string[] = [];
+  const warning: string[] = [];
+  const danger: string[] = [];
 
   for (const check of report.checks) {
-    if (check.risk === "LOW" && check.safe) {
-      safeItems.push(`✓ ${check.message}`);
-    } else if (
-      check.risk === "MEDIUM" ||
-      check.risk === "UNKNOWN"
-    ) {
-      warningItems.push(`⚠ ${check.message}`);
-    } else {
-      dangerItems.push(`✗ ${check.message}`);
-    }
+    if (check.risk === "LOW" && check.safe) safe.push(`- ${check.message}`);
+    else if (check.risk === "MEDIUM" || check.risk === "UNKNOWN")
+      warning.push(`- ${check.message}`);
+    else danger.push(`- ${check.message}`);
   }
 
-  return `
-RISK SCORE: ${report.score} / 10
-STATUS: ${report.label}
+  const section = (title: string, items: string[]) =>
+    `${title}\n${items.length ? items.join("\n") : "None"}`;
 
-========================
-
-SAFE
-${safeItems.length ? safeItems.join("\n") : "None"}
-
-========================
-
-WARNING
-${
-  warningItems.length
-    ? warningItems.join("\n")
-    : "None"
-}
-
-========================
-
-HIGH RISK
-${
-  dangerItems.length
-    ? dangerItems.join("\n")
-    : "None"
-}
-`;
+  return [
+    `RISK SCORE: ${report.score} / 10`,
+    `STATUS: ${report.label}`,
+    "",
+    section("SAFE", safe),
+    "",
+    section("WARNING", warning),
+    "",
+    section("HIGH RISK", danger),
+  ].join("\n");
 }

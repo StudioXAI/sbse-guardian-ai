@@ -1,114 +1,183 @@
 "use client";
 
-import { useState } from "react";
-import InstitutionalAuditDashboardV2 from "@/components/InstitutionalAuditDashboardV2";
-import AuditVisualDashboard from "@/components/AuditVisualDashboard";
+import { useEffect, useRef, useState } from "react";
+import ScannerHero from "@/components/ScannerHero";
+import ScanProgress from "@/components/ScanProgress";
+import AuditReportView from "@/components/AuditReportView";
+import RecentScans, { addRecentScan } from "@/components/RecentScans";
+import type { AuditReport, AuditApiResponse } from "@/lib/types";
+import { CONTRACT_REGEX } from "@/lib/constants";
+
+type Mode = "empty" | "scanning" | "done";
 
 export default function Home() {
   const [contractAddress, setContractAddress] = useState("");
-  const [result, setResult] = useState<any>(null);
+  const [result, setResult] = useState<AuditReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  const handleScan = async () => {
-    if (!contractAddress) return;
+  const mode: Mode = loading ? "scanning" : result ? "done" : "empty";
+
+  /* ⌘K / Ctrl+K to focus the input. */
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const isModK = (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k";
+      const isSlash = e.key === "/" && !(e.target as HTMLElement)?.matches?.("input, textarea");
+      if (isModK || isSlash) {
+        e.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
+  const runScan = async (addrParam?: string) => {
+    const addr = (addrParam ?? contractAddress).trim();
+    setError(null);
+
+    if (!addr) {
+      setError("Enter a contract address to scan.");
+      return;
+    }
+    if (!CONTRACT_REGEX.test(addr)) {
+      setError("That doesn't look like a valid 0x address.");
+      return;
+    }
 
     setLoading(true);
+    setResult(null);
 
     try {
-      const res = await fetch("/api/scan", {
+      const res = await fetch("/api/audit", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          contractAddress,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ contractAddress: addr }),
       });
 
-      const data = await res.json();
+      const data: AuditApiResponse = await res.json().catch(() => ({
+        success: false,
+        message: "Invalid response from server.",
+      }));
+
+      if (!res.ok || !("success" in data) || data.success !== true) {
+        const msg = "message" in data && data.message ? data.message : `Scan failed (HTTP ${res.status}).`;
+        setError(msg);
+        return;
+      }
+
       setResult(data);
-    } catch (error) {
-      console.error("Scan failed:", error);
+      addRecentScan({
+        address: data.contractAddress,
+        project: data.project,
+        chain: data.chain,
+        grade: data.grade,
+        verdict: data.verdict.label,
+        scannedAt: data.scannedAt,
+      });
+    } catch (e) {
+      setError("Couldn't reach the Guardian API. Check your connection and try again.");
     } finally {
       setLoading(false);
     }
   };
 
-  return (
-    <main className="min-h-screen bg-black text-white">
-      {/* NAVBAR */}
-      <nav className="w-full border-b border-white/10 bg-black/80 backdrop-blur-xl">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold">
-              SbSe Guardian AI
-            </h1>
-            <p className="text-xs text-white/60">
-              Smart Contract Auditor Agent
-            </p>
-          </div>
+  const reset = () => {
+    setResult(null);
+    setError(null);
+    setContractAddress("");
+    /* Give React a tick to unmount the report before focusing */
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
 
-          <button className="px-5 py-2 rounded-xl bg-white text-black font-medium">
-            Launch App
-          </button>
+  const handleRecentSelect = (address: string) => {
+    setContractAddress(address);
+    runScan(address);
+  };
+
+  return (
+    <main className="min-h-screen">
+      {/* Nav */}
+      <nav
+        className="sticky top-0 z-50 backdrop-blur-xl border-b"
+        style={{
+          background: "rgba(10,8,7,0.75)",
+          borderColor: "var(--border)",
+        }}
+      >
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div
+              className="h-7 w-7 rounded-lg flex items-center justify-center"
+              style={{
+                background: "var(--amber)",
+                color: "var(--bg)",
+              }}
+              aria-hidden
+            >
+              <span className="font-display italic text-base leading-none">S</span>
+            </div>
+            <span className="font-mono text-sm tracking-[0.1em]" style={{ color: "var(--fg)" }}>
+              SbSe <span style={{ color: "var(--fg-muted)" }}>Guardian</span>
+            </span>
+          </div>
+          <div className="hidden md:flex items-center gap-6 font-mono text-[10px] tracking-[0.3em] uppercase"
+               style={{ color: "var(--fg-dim)" }}>
+            <span>Mainnet</span>
+            <span
+              className="inline-flex items-center gap-2"
+              style={{ color: "var(--green)" }}
+            >
+              <span
+                className="inline-block h-1.5 w-1.5 rounded-full"
+                style={{ background: "var(--green)", animation: "pulse 2s ease-in-out infinite" }}
+              />
+              Online
+            </span>
+          </div>
         </div>
       </nav>
 
-      {/* HERO */}
-      <section className="max-w-7xl mx-auto px-6 pt-24 pb-20">
-        <h2 className="text-5xl md:text-6xl font-bold leading-tight">
-          Don’t Audit Code.
-          <br />
-          Ask the Agent.
-        </h2>
+      <div className="max-w-6xl mx-auto px-6 py-12 md:py-20">
+        {mode === "empty" && (
+          <>
+            <ScannerHero
+              ref={inputRef}
+              value={contractAddress}
+              onChange={setContractAddress}
+              onSubmit={() => runScan()}
+              loading={loading}
+              error={error}
+            />
+            <RecentScans onSelect={handleRecentSelect} />
+          </>
+        )}
 
-        <p className="mt-6 text-white/70 max-w-2xl text-lg">
-          Analyze any smart contract across any chain with
-          institutional-grade security intelligence powered
-          by the SbSe Protocol.
-        </p>
-      </section>
+        {mode === "scanning" && (
+          <div className="max-w-3xl mx-auto pt-8">
+            <ScanProgress />
+          </div>
+        )}
 
-      {/* SCANNER */}
-      <section className="max-w-7xl mx-auto px-6 pb-24">
-        <div className="max-w-4xl rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-xl">
-          <h3 className="text-3xl font-bold mb-4">
-            Analyze Any Smart Contract
-          </h3>
+        {mode === "done" && result && (
+          <AuditReportView report={result} onScanAnother={reset} />
+        )}
+      </div>
 
-          <input
-            type="text"
-            value={contractAddress}
-            onChange={(e) =>
-              setContractAddress(e.target.value)
-            }
-            placeholder="Paste contract address..."
-            className="w-full rounded-2xl border border-white/10 bg-black/40 px-5 py-4 text-white outline-none focus:border-white/30"
-          />
-
-          <button
-            onClick={handleScan}
-            disabled={loading}
-            className="mt-4 px-6 py-4 rounded-2xl bg-white text-black font-semibold transition hover:scale-[1.02] disabled:opacity-60"
-          >
-            {loading ? "Scanning..." : "Scan Contract"}
-          </button>
+      {/* Footer */}
+      <footer className="mt-20 border-t" style={{ borderColor: "var(--border)" }}>
+        <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
+          <p className="font-mono text-[10px] tracking-[0.3em] uppercase"
+             style={{ color: "var(--fg-dim)" }}>
+            SbSe Guardian · Smart Contract Intelligence
+          </p>
+          <p className="text-xs" style={{ color: "var(--fg-dim)" }}>
+            Automated analysis is a signal, not a guarantee. Always DYOR.
+          </p>
         </div>
-      </section>
-
-      {/* DYNAMIC INSTITUTIONAL DASHBOARD */}
-      {result && (
-        <section className="max-w-7xl mx-auto px-6 pb-24">
-          <InstitutionalAuditDashboardV2 report={result} />
-        </section>
-      )}
-
-      {/* PREMIUM VISUAL DASHBOARD — NOW FULLY DYNAMIC */}
-      {result && (
-        <section className="max-w-7xl mx-auto px-6 pb-24">
-          <AuditVisualDashboard report={result} />
-        </section>
-      )}
+      </footer>
     </main>
   );
 }

@@ -1,59 +1,37 @@
+/* ─────────────────────────────────────────────────────────────
+   AI Rug Pull Prediction (heuristic).
+   Kept the original weightings but typed the output so
+   downstream code never crashes on missing fields.
+   ───────────────────────────────────────────────────────────── */
+
+import type { SeverityLabel } from "./types";
+
+export interface RugPrediction {
+  rugProbability: number; // 0-100
+  label: SeverityLabel;
+}
+
 export function predictRugPull(
   riskScore: number,
   holderPercent: number,
   liquidityLocked: boolean,
   ownerPrivileges: boolean,
-  honeypotSignals: boolean
-) {
-  let rugProbability = 10;
+  honeypotSignals: boolean,
+): RugPrediction {
+  let p = 10;
 
-  /**
-   * Holder concentration
-   */
-  if (holderPercent > 30) {
-    rugProbability += 20;
-  }
+  if (holderPercent > 30) p += 20;
+  if (!liquidityLocked) p += 25;
+  if (ownerPrivileges) p += 15;
+  if (honeypotSignals) p += 20;
 
-  /**
-   * Liquidity unlocked
-   */
-  if (!liquidityLocked) {
-    rugProbability += 25;
-  }
+  p += riskScore * 2;
+  p = Math.max(0, Math.min(p, 100));
 
-  /**
-   * Owner privileges
-   */
-  if (ownerPrivileges) {
-    rugProbability += 15;
-  }
+  let label: SeverityLabel = "Low";
+  if (p >= 70) label = "Critical";
+  else if (p >= 50) label = "High";
+  else if (p >= 30) label = "Medium";
 
-  /**
-   * Honeypot logic
-   */
-  if (honeypotSignals) {
-    rugProbability += 20;
-  }
-
-  /**
-   * Existing system score influence
-   */
-  rugProbability += riskScore * 2;
-
-  rugProbability = Math.min(rugProbability, 100);
-
-  let label = "Low";
-
-  if (rugProbability >= 70) {
-    label = "Critical";
-  } else if (rugProbability >= 50) {
-    label = "High";
-  } else if (rugProbability >= 30) {
-    label = "Medium";
-  }
-
-  return {
-    rugProbability,
-    label,
-  };
+  return { rugProbability: p, label };
 }

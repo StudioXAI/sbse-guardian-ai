@@ -1,36 +1,24 @@
-type CheckResult = {
-  safe: boolean;
-  risk: string;
-  message: string;
-  scoreImpact: number;
-};
+/* ─────────────────────────────────────────────────────────────
+   Professional risk score aggregator.
+   Output: 1-10 where 10 = safest.
+   ───────────────────────────────────────────────────────────── */
 
-export function calculateRiskScore(
-  checks: CheckResult[]
-) {
+import type { CheckResult } from "./honeypotCheck";
+
+export interface ProfessionalScore {
+  score: number;
+  label: "SAFE" | "WARNING" | "HIGH RISK";
+  checks: CheckResult[];
+}
+
+export function calculateRiskScore(checks: CheckResult[]): ProfessionalScore {
   let baseScore = 10;
+  for (const check of checks) baseScore -= check.scoreImpact;
+  baseScore = Math.max(1, Math.min(10, baseScore));
 
-  for (const check of checks) {
-    baseScore -= check.scoreImpact;
-  }
+  let label: ProfessionalScore["label"] = "SAFE";
+  if (baseScore <= 4) label = "HIGH RISK";
+  else if (baseScore <= 7) label = "WARNING";
 
-  if (baseScore < 1) {
-    baseScore = 1;
-  }
-
-  let label = "SAFE";
-
-  if (baseScore <= 7) {
-    label = "WARNING";
-  }
-
-  if (baseScore <= 4) {
-    label = "HIGH RISK";
-  }
-
-  return {
-    score: Number(baseScore.toFixed(1)),
-    label,
-    checks,
-  };
+  return { score: Number(baseScore.toFixed(1)), label, checks };
 }

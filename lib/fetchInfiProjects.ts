@@ -1,108 +1,87 @@
-import axios from "axios";
+/* ─────────────────────────────────────────────────────────────
+   INFI Project Fetcher
+   - Native fetch, no axios
+   - 5-minute in-memory cache (projects rarely change)
+   - 12s timeout (down from 20s)
+   - No console.log spam in production
+   ───────────────────────────────────────────────────────────── */
 
-const API_BASE =
-  "https://launchpad.infimultichain.com/users";
+import { INFI_CACHE_TTL_MS, debug } from "./constants";
+import { fetchJson } from "./fetchHelpers";
 
-export async function fetchInfiProjects() {
+const API_BASE = "https://launchpad.infimultichain.com/users";
+
+export interface InfiProject {
+  id: string | number;
+  name: string;
+  symbol: string;
+  contract: string;
+  owner: string;
+  chain: string;
+  type: string;
+  liquidity: unknown;
+  listed: boolean;
+  featured: boolean;
+  active: boolean;
+  website: string;
+  status: string;
+  source: string;
+}
+
+let cached: { at: number; data: InfiProject[] } | null = null;
+
+function normalizeProject(p: any): InfiProject | null {
+  if (!p?.token_address || !p?.token_name) return null;
+  return {
+    id: p.id,
+    name: p.token_name,
+    symbol: p.token_symbol,
+    contract: p.token_address,
+    owner: p.owner_address,
+    chain: p.chainName,
+    type: p.type,
+    liquidity: p.liquidity,
+    listed: p.is_listed === 1,
+    featured: p.is_feature === 1,
+    active: p.is_active === 1,
+    website: p.website,
+    status: "verified",
+    source: "INFI Official Backend",
+  };
+}
+
+export async function fetchInfiProjects(): Promise<InfiProject[]> {
+  const now = Date.now();
+  if (cached && now - cached.at < INFI_CACHE_TTL_MS) {
+    debug("INFI cache hit");
+    return cached.data;
+  }
+
   try {
-    console.log(
-      "Loading INFI projects from official launchpad backend..."
-    );
-
     const [listedRes, upcomingRes] = await Promise.all([
-      axios.get(
-        `${API_BASE}/getAllListedApplicationForms`,
-        {
-          timeout: 20000,
-        }
-      ),
-      axios.get(
-        `${API_BASE}/getAllUpcommingApplicationForms`,
-        {
-          timeout: 20000,
-        }
-      ),
+      fetchJson<any>(`${API_BASE}/getAllListedApplicationForms`, 12_000),
+      fetchJson<any>(`${API_BASE}/getAllUpcommingApplicationForms`, 12_000),
     ]);
 
-    /*
-      REAL structure:
-      data.data.liquidityApplications
-      data.data.presaleApplications
-    */
+    const listed = listedRes?.data?.liquidityApplications || [];
+    const listedPresales = listedRes?.data?.presaleApplications || [];
+    const upcoming = upcomingRes?.data?.presaleApplications || [];
 
-    const listed =
-      listedRes?.data?.data?.liquidityApplications || [];
+    const all = [...listed, ...listedPresales, ...upcoming];
+    const map = new Map<string, InfiProject>();
 
-    const listedPresales =
-      listedRes?.data?.data?.presaleApplications || [];
-
-    const upcoming =
-      upcomingRes?.data?.data?.presaleApplications || [];
-
-    console.log(
-      `Listed liquidity projects found: ${listed.length}`
-    );
-
-    console.log(
-      `Listed presales found: ${listedPresales.length}`
-    );
-
-    console.log(
-      `Upcoming presales found: ${upcoming.length}`
-    );
-
-    const allProjects = [
-      ...listed,
-      ...listedPresales,
-      ...upcoming,
-    ];
-
-    const uniqueMap = new Map();
-
-    for (const project of allProjects) {
-      if (
-        !project?.token_address ||
-        !project?.token_name
-      ) {
-        continue;
-      }
-
-      uniqueMap.set(
-        project.token_address.toLowerCase(),
-        {
-          id: project.id,
-          name: project.token_name,
-          symbol: project.token_symbol,
-          contract: project.token_address,
-          owner: project.owner_address,
-          chain: project.chainName,
-          type: project.type,
-          liquidity: project.liquidity,
-          listed: project.is_listed === 1,
-          featured: project.is_feature === 1,
-          active: project.is_active === 1,
-          website: project.website,
-          status: "verified",
-          source: "INFI Official Backend",
-        }
-      );
+    for (const raw of all) {
+      const p = normalizeProject(raw);
+      if (p) map.set(p.contract.toLowerCase(), p);
     }
 
-    const verifiedProjects = Array.from(
-      uniqueMap.values()
-    );
-
-    console.log(
-      `Total verified INFI projects loaded: ${verifiedProjects.length}`
-    );
-
-    return verifiedProjects;
+    const data = Array.from(map.values());
+    cached = { at: now, data };
+    debug(`Loaded ${data.length} INFI projects`);
+    return data;
   } catch (error) {
-    console.error(
-      "INFI project loading failed:",
-      error
-    );
-
-    return [];
+    debug("INFI fetch failed:", error);
+    // Return cached data if available, even if expired.
+    return cached?.data ?? [];
   }
 }

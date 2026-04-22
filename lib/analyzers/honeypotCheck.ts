@@ -1,132 +1,71 @@
-import { ethers } from "ethers";
+/* ─────────────────────────────────────────────────────────────
+   Honeypot Check (bytecode-level)
+   Uses shared isInstitutional() helper — no more duplicated list.
+   ───────────────────────────────────────────────────────────── */
 
-const INSTITUTIONAL_TOKENS = [
-  "USDC",
-  "USDT",
-  "DAI",
-  "WETH",
-  "WBTC",
-  "ETH",
-  "BTC",
+import { ethers } from "ethers";
+import { isInstitutional, debug } from "../constants";
+
+export interface CheckResult {
+  safe: boolean;
+  risk: "LOW" | "MEDIUM" | "HIGH" | "UNKNOWN";
+  message: string;
+  scoreImpact: number;
+}
+
+const SUSPICIOUS_PATTERNS = [
+  "blacklist",
+  "setBlacklist",
+  "excludeFromFee",
+  "setTaxFeePercent",
+  "setLiquidityFeePercent",
+  "tradingEnabled",
+  "setTradingEnabled",
+  "maxTxAmount",
+  "maxWalletAmount",
+  "mint",
+  "pause",
+  "unpause",
 ];
 
 export async function honeypotCheck(
   tokenAddress: string,
   rpcUrl: string,
-  symbol?: string
-) {
+  symbol?: string,
+): Promise<CheckResult> {
   try {
-    /**
-     * STEP 1
-     * Institutional token override
-     *
-     * Stablecoins + bluechips should NOT be flagged
-     * for normal admin functions like mint/pause/owner
-     */
-
-    if (
-      symbol &&
-      INSTITUTIONAL_TOKENS.includes(
-        symbol.toUpperCase()
-      )
-    ) {
+    if (isInstitutional(symbol)) {
       return {
         safe: true,
         risk: "LOW",
-        message:
-          "Institutional token detected — honeypot risk bypassed",
+        message: "Institutional token — honeypot heuristics bypassed",
         scoreImpact: 0,
       };
     }
 
-    /**
-     * STEP 2
-     * Standard smart contract scan
-     */
-
-    const provider =
-      new ethers.JsonRpcProvider(rpcUrl);
-
-    const code =
-      await provider.getCode(tokenAddress);
-
+    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const code = await provider.getCode(tokenAddress);
     if (!code || code === "0x") {
-      return {
-        safe: false,
-        risk: "HIGH",
-        message: "No contract code found",
-        scoreImpact: 4,
-      };
+      return { safe: false, risk: "HIGH", message: "No contract code found", scoreImpact: 4 };
     }
-
-    /**
-     * STEP 3
-     * Suspicious honeypot patterns
-     */
-
-    const suspiciousPatterns = [
-      "blacklist",
-      "setBlacklist",
-      "excludeFromFee",
-      "setTaxFeePercent",
-      "setLiquidityFeePercent",
-      "tradingEnabled",
-      "setTradingEnabled",
-      "maxTxAmount",
-      "maxWalletAmount",
-      "mint",
-      "pause",
-      "unpause",
-    ];
 
     const bytecode = code.toLowerCase();
+    const found = SUSPICIOUS_PATTERNS.filter((p) =>
+      bytecode.includes(p.toLowerCase()),
+    );
 
-    let foundFlags: string[] = [];
-
-    for (const pattern of suspiciousPatterns) {
-      if (
-        bytecode.includes(
-          pattern.toLowerCase()
-        )
-      ) {
-        foundFlags.push(pattern);
-      }
-    }
-
-    if (foundFlags.length > 0) {
+    if (found.length > 0) {
       return {
         safe: false,
         risk: "MEDIUM",
-        message: `Suspicious functions detected: ${foundFlags.join(
-          ", "
-        )}`,
+        message: `Suspicious functions detected: ${found.join(", ")}`,
         scoreImpact: 2,
       };
     }
 
-    /**
-     * STEP 4
-     * Safe result
-     */
-
-    return {
-      safe: true,
-      risk: "LOW",
-      message:
-        "No major honeypot patterns detected",
-      scoreImpact: 0,
-    };
+    return { safe: true, risk: "LOW", message: "No major honeypot patterns detected", scoreImpact: 0 };
   } catch (error) {
-    console.error(
-      "Honeypot analysis failed:",
-      error
-    );
-
-    return {
-      safe: false,
-      risk: "UNKNOWN",
-      message: "Failed to analyze contract",
-      scoreImpact: 1,
-    };
+    debug("Honeypot analysis failed:", error);
+    return { safe: false, risk: "UNKNOWN", message: "Failed to analyze contract", scoreImpact: 1 };
   }
 }

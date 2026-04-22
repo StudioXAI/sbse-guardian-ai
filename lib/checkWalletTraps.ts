@@ -1,144 +1,67 @@
-import axios from "axios";
+/* ─────────────────────────────────────────────────────────────
+   Wallet Trap Detection
+   ───────────────────────────────────────────────────────────── */
 
-const INSTITUTIONAL_TOKENS = [
-  "USDC",
-  "USDT",
-  "DAI",
-  "WETH",
-  "WBTC",
-  "ETH",
-  "BTC",
-];
+import { isInstitutional, debug } from "./constants";
+import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
+
+export interface WalletTrapResult {
+  risky: boolean;
+  findings: string[];
+}
 
 export async function checkWalletTraps(
   contractAddress: string,
-  symbol?: string
-) {
+  chain: ChainInfo,
+  symbol?: string,
+): Promise<WalletTrapResult> {
   try {
-    console.log(
-      "Checking wallet trap risks for:",
-      contractAddress
-    );
-
-    let findings: string[] = [];
-    let risky = false;
-
-    /**
-     * STEP 1
-     * Stablecoins + Bluechips should NOT trigger fake wallet trap alerts
-     */
-
-    if (
-      symbol &&
-      INSTITUTIONAL_TOKENS.includes(
-        symbol.toUpperCase()
-      )
-    ) {
-      findings.push(
-        "Institutional wallet distribution detected"
-      );
-
-      findings.push(
-        "Healthy wallet distribution detected"
-      );
-
-      findings.push(
-        "Top wallet concentration: 5%"
-      );
-
+    if (isInstitutional(symbol)) {
       return {
         risky: false,
-        findings,
+        findings: [
+          "Institutional wallet distribution detected",
+          "Healthy wallet distribution detected",
+          "Top wallet concentration: ~5%",
+        ],
       };
     }
 
-    /**
-     * STEP 2
-     * Real holder concentration analysis
-     *
-     * IMPORTANT:
-     * TokenHolderQuantity is WRONG
-     * We must use percentage
-     */
+    const url = explorerUrl(chain, {
+      module: "token",
+      action: "tokenholderlist",
+      contractaddress: contractAddress,
+      page: "1",
+      offset: "10",
+    });
 
-    const apiKey = process.env.ETHERSCAN_API_KEY;
-
-    const url = `https://api.etherscan.io/api?module=token&action=tokenholderlist&contractaddress=${contractAddress}&page=1&offset=10&apikey=${apiKey}`;
-
-    const response = await axios.get(url);
-
-    const holders =
-      response.data?.result || [];
+    const data = await fetchJson<any>(url);
+    const holders = Array.isArray(data?.result) ? data.result : [];
 
     if (!holders.length) {
-      findings.push(
-        "Unable to fetch holder wallet intelligence"
-      );
-
-      return {
-        risky: true,
-        findings,
-      };
+      return { risky: true, findings: ["Unable to fetch holder wallet intelligence"] };
     }
 
-    /**
-     * FIX:
-     * Use percentage instead of TokenHolderQuantity
-     */
-
-    const topHolderPercent = parseFloat(
-      holders[0]?.percentage || "0"
-    );
-
-    if (topHolderPercent > 20) {
-      findings.push(
-        "Top wallet concentration risk detected"
-      );
-
-      risky = true;
-    } else {
-      findings.push(
-        "Healthy wallet distribution detected"
-      );
-    }
-
-    findings.push(
-      `Top wallet concentration: ${topHolderPercent}%`
-    );
-
-    /**
-     * Additional trap heuristics
-     */
+    const topHolderPercent = parseFloat(holders[0]?.percentage || "0");
+    const findings: string[] = [];
+    let risky = false;
 
     if (topHolderPercent > 50) {
-      findings.push(
-        "Extreme whale concentration detected"
-      );
-
+      findings.push("Extreme whale concentration detected");
       risky = true;
+    } else if (topHolderPercent > 20) {
+      findings.push("Top wallet concentration risk detected");
+      risky = true;
+    } else if (topHolderPercent < 1) {
+      findings.push("Highly decentralized wallet structure");
+    } else {
+      findings.push("Healthy wallet distribution");
     }
 
-    if (topHolderPercent < 1) {
-      findings.push(
-        "Highly decentralized wallet structure detected"
-      );
-    }
-
-    return {
-      risky,
-      findings,
-    };
+    findings.push(`Top wallet concentration: ${topHolderPercent}%`);
+    return { risky, findings };
   } catch (error) {
-    console.error(
-      "Wallet trap detection failed:",
-      error
-    );
-
-    return {
-      risky: true,
-      findings: [
-        "Wallet trap analysis unavailable",
-      ],
-    };
+    debug("Wallet trap detection failed:", error);
+    return { risky: true, findings: ["Wallet trap analysis unavailable"] };
   }
 }

@@ -1,252 +1,173 @@
-import axios from "axios";
+/* ─────────────────────────────────────────────────────────────
+   Token Identity Engine
+   Fixes: ChainInfo-aware (uses CORRECT explorer), no axios,
+   cleaner override flow, types instead of `any` returns.
+   ───────────────────────────────────────────────────────────── */
 
-const STABLECOIN_OVERRIDES: Record<
-  string,
-  {
-    projectName: string;
-    website: string;
-    issuer: string;
-    fallbackMarketCap: string;
-    knownContracts?: string[];
-  }
-> = {
+import { debug } from "./constants";
+import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
+
+interface StablecoinMeta {
+  projectName: string;
+  website: string;
+  issuer: string;
+  fallbackMarketCap: string;
+  knownContracts: string[];
+}
+
+const STABLECOIN_OVERRIDES: Record<string, StablecoinMeta> = {
   USDC: {
     projectName: "USD Coin",
     website: "https://www.circle.com",
     issuer: "Circle",
     fallbackMarketCap: "$54,653,671,157",
-    knownContracts: [
-      "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", // Ethereum
-    ],
+    knownContracts: ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"],
   },
-
   USDT: {
     projectName: "Tether USD",
     website: "https://tether.to",
     issuer: "Tether",
     fallbackMarketCap: "$140,000,000,000",
-    knownContracts: [
-      "0xdac17f958d2ee523a2206206994597c13d831ec7", // Ethereum
-    ],
+    knownContracts: ["0xdac17f958d2ee523a2206206994597c13d831ec7"],
   },
-
   DAI: {
     projectName: "DAI Stablecoin",
     website: "https://makerdao.com",
     issuer: "MakerDAO",
     fallbackMarketCap: "$5,000,000,000",
-    knownContracts: [
-      "0x6b175474e89094c44da98b954eedeac495271d0f", // Ethereum
-    ],
+    knownContracts: ["0x6b175474e89094c44da98b954eedeac495271d0f"],
   },
 };
 
-function detectKnownStablecoinByAddress(
-  contractAddress: string
-): string | null {
-  const normalized = contractAddress.toLowerCase();
-
-  for (const [symbol, config] of Object.entries(
-    STABLECOIN_OVERRIDES
-  )) {
-    if (
-      config.knownContracts?.some(
-        (addr) => addr.toLowerCase() === normalized
-      )
-    ) {
+function detectStablecoinByAddress(addr: string): string | null {
+  const normalized = addr.toLowerCase();
+  for (const [symbol, meta] of Object.entries(STABLECOIN_OVERRIDES)) {
+    if (meta.knownContracts.some((a) => a.toLowerCase() === normalized)) {
       return symbol;
     }
   }
-
   return null;
 }
 
-async function fetchLiveStablecoinMarketCap(
+async function fetchLiveMarketCap(
   symbol: string,
-  fallback: string
-) {
+  fallback: string,
+): Promise<string> {
+  const geckoMap: Record<string, string> = {
+    USDC: "usd-coin",
+    USDT: "tether",
+    DAI: "dai",
+  };
+  const coinId = geckoMap[symbol.toUpperCase()];
+  if (!coinId) return fallback;
   try {
-    const coinGeckoMap: Record<string, string> = {
-      USDC: "usd-coin",
-      USDT: "tether",
-      DAI: "dai",
-    };
-
-    const coinId = coinGeckoMap[symbol.toUpperCase()];
-
-    if (!coinId) return fallback;
-
-    const cgUrl = `https://api.coingecko.com/api/v3/coins/${coinId}`;
-
-    const cgResponse = await axios.get(cgUrl);
-
-    const marketCap =
-      cgResponse.data?.market_data?.market_cap?.usd;
-
-    if (!marketCap) return fallback;
-
-    return `$${Math.round(marketCap).toLocaleString()}`;
-  } catch {
-    console.log(
-      "CoinGecko fallback to stored market cap"
+    const data = await fetchJson<any>(
+      `https://api.coingecko.com/api/v3/coins/${coinId}`,
+      8_000,
     );
-
+    const mc = data?.market_data?.market_cap?.usd;
+    return mc ? `$${Math.round(mc).toLocaleString()}` : fallback;
+  } catch {
     return fallback;
   }
 }
 
+export interface TokenIdentity {
+  projectName: string;
+  symbol: string;
+  dex: string;
+  marketCap: string;
+  website: string | null;
+  issuer?: string;
+}
+
 export async function fetchTokenIdentity(
-  contractAddress: string
-) {
+  contractAddress: string,
+  chain: ChainInfo,
+): Promise<TokenIdentity> {
   try {
-    /**
-     * STEP 0
-     * HARD OVERRIDE FIRST
-     * Critical fix for USDC / USDT / DAI
-     */
-
-    const forcedStablecoin =
-      detectKnownStablecoinByAddress(contractAddress);
-
-    if (
-      forcedStablecoin &&
-      STABLECOIN_OVERRIDES[forcedStablecoin]
-    ) {
-      const stable =
-        STABLECOIN_OVERRIDES[forcedStablecoin];
-
-      const liveMarketCap =
-        await fetchLiveStablecoinMarketCap(
-          forcedStablecoin,
-          stable.fallbackMarketCap
-        );
-
+    /* Step 0: Hard override by known contract address. */
+    const forced = detectStablecoinByAddress(contractAddress);
+    if (forced && STABLECOIN_OVERRIDES[forced]) {
+      const meta = STABLECOIN_OVERRIDES[forced];
+      const marketCap = await fetchLiveMarketCap(forced, meta.fallbackMarketCap);
       return {
-        projectName: stable.projectName,
-        symbol: forcedStablecoin,
+        projectName: meta.projectName,
+        symbol: forced,
         dex: "Institutional Liquidity",
-        marketCap: liveMarketCap,
-        website: stable.website,
-        issuer: stable.issuer,
+        marketCap,
+        website: meta.website,
+        issuer: meta.issuer,
       };
     }
 
-    /**
-     * STEP 1
-     * Explorer FIRST
-     */
-
-    const apiKey = process.env.ETHERSCAN_API_KEY;
-
-    const explorerUrl = `https://api.etherscan.io/api?module=token&action=tokeninfo&contractaddress=${contractAddress}&apikey=${apiKey}`;
-
+    /* Step 1: Explorer token info on the CORRECT chain. */
     let symbol = "Unknown";
     let projectName = "Unknown Project";
 
     try {
-      const explorerRes = await axios.get(explorerUrl);
-
-      const token = explorerRes.data?.result?.[0];
-
+      const url = explorerUrl(chain, {
+        module: "token",
+        action: "tokeninfo",
+        contractaddress: contractAddress,
+      });
+      const data = await fetchJson<any>(url);
+      const token = data?.result?.[0];
       if (token) {
         symbol = token.symbol || "Unknown";
-        projectName =
-          token.tokenName || "Unknown Project";
+        projectName = token.tokenName || "Unknown Project";
       }
     } catch {
-      console.log(
-        "Explorer token info fallback triggered"
-      );
+      debug("Explorer token info fallback");
     }
 
-    /**
-     * STEP 2
-     * Symbol-based stablecoin override
-     */
-
-    if (
-      symbol &&
-      STABLECOIN_OVERRIDES[symbol.toUpperCase()]
-    ) {
-      const stable =
-        STABLECOIN_OVERRIDES[symbol.toUpperCase()];
-
-      const liveMarketCap =
-        await fetchLiveStablecoinMarketCap(
-          symbol,
-          stable.fallbackMarketCap
-        );
-
+    /* Step 2: Symbol-based stablecoin override. */
+    const upper = symbol.toUpperCase();
+    if (STABLECOIN_OVERRIDES[upper]) {
+      const meta = STABLECOIN_OVERRIDES[upper];
+      const marketCap = await fetchLiveMarketCap(symbol, meta.fallbackMarketCap);
       return {
-        projectName: stable.projectName,
+        projectName: meta.projectName,
         symbol,
         dex: "Institutional Liquidity",
-        marketCap: liveMarketCap,
-        website: stable.website,
-        issuer: stable.issuer,
+        marketCap,
+        website: meta.website,
+        issuer: meta.issuer,
       };
     }
 
-    /**
-     * STEP 3
-     * Non-stablecoin fallback:
-     * DexScreener only AFTER blockchain detection
-     */
-
-    const dexUrl = `https://api.dexscreener.com/latest/dex/tokens/${contractAddress}`;
-
-    const dexResponse = await axios.get(dexUrl);
-
-    const pairs = dexResponse.data?.pairs || [];
-
-    if (!pairs.length) {
+    /* Step 3: DexScreener enrichment. */
+    try {
+      const dexData = await fetchJson<any>(
+        `https://api.dexscreener.com/latest/dex/tokens/${contractAddress}`,
+        10_000,
+      );
+      const pairs: any[] = dexData?.pairs || [];
+      if (!pairs.length) {
+        return {
+          projectName,
+          symbol,
+          dex: "Unknown",
+          marketCap: "Unknown",
+          website: null,
+        };
+      }
+      pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
+      const main = pairs[0];
       return {
-        projectName,
-        symbol,
-        dex: "Unknown",
-        marketCap: "Unknown",
-        website: null,
+        projectName: main.baseToken?.name || projectName,
+        symbol: main.baseToken?.symbol || symbol,
+        dex: main.dexId || "Verified Liquidity Source",
+        marketCap: main.marketCap
+          ? `$${Math.round(main.marketCap).toLocaleString()}`
+          : "Unknown",
+        website: main.info?.websites?.[0]?.url || null,
       };
+    } catch {
+      return { projectName, symbol, dex: "Unknown", marketCap: "Unknown", website: null };
     }
-
-    /**
-     * Choose strongest pair
-     */
-
-    const sortedPairs = pairs.sort(
-      (a: any, b: any) =>
-        (b.liquidity?.usd || 0) -
-        (a.liquidity?.usd || 0)
-    );
-
-    const mainPair = sortedPairs[0];
-
-    return {
-      projectName:
-        mainPair.baseToken?.name || projectName,
-
-      symbol:
-        mainPair.baseToken?.symbol || symbol,
-
-      dex:
-        mainPair.dexId ||
-        "Verified Liquidity Source",
-
-      marketCap: mainPair.marketCap
-        ? `$${Math.round(
-            mainPair.marketCap
-          ).toLocaleString()}`
-        : "Unknown",
-
-      website:
-        mainPair.info?.websites?.[0]?.url || null,
-    };
   } catch (error) {
-    console.error(
-      "Token identity fetch failed:",
-      error
-    );
-
+    debug("Token identity fetch failed:", error);
     return {
       projectName: "Unknown Project",
       symbol: "Unknown",

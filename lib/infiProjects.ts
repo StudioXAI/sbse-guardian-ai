@@ -1,3 +1,6 @@
+/* Static fallback list used when the INFI API is unreachable.
+   Kept for backward compatibility with other imports. */
+
 export const infiProjects = [
   {
     name: "People Token",

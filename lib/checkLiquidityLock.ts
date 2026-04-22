@@ -1,4 +1,9 @@
-import axios from "axios";
+/* ─────────────────────────────────────────────────────────────
+   Liquidity Lock Analysis
+   ───────────────────────────────────────────────────────────── */
+
+import { isInstitutional, debug } from "./constants";
+import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
 
 const KNOWN_LOCKERS = [
   "pinklock",
@@ -6,210 +11,89 @@ const KNOWN_LOCKERS = [
   "teamfinance",
   "team finance",
   "locker",
-  "lock",
   "vesting",
-  "burn",
-  "dead",
   "0x000000000000000000000000000000000000dead",
 ];
 
-const INSTITUTIONAL_TOKENS = [
-  "USDC",
-  "USDT",
-  "DAI",
-  "WETH",
-  "WBTC",
-  "ETH",
-  "BTC",
-  "FRAX",
-  "TUSD",
-  "FDUSD",
-  "PYUSD",
-];
+export interface LiquidityLockResult {
+  locked: boolean;
+  risky: boolean;
+  findings: string[];
+}
 
 export async function checkLiquidityLock(
   contractAddress: string,
-  symbol?: string
-) {
+  chain: ChainInfo,
+  symbol?: string,
+): Promise<LiquidityLockResult> {
   try {
-    console.log(
-      "Checking liquidity lock for:",
-      contractAddress
-    );
-
-    let findings: string[] = [];
-    let risky = false;
-    let locked = false;
-
-    /**
-     * STEP 1
-     * Stablecoins + bluechips should NOT trigger fake LP warnings
-     */
-
-    if (
-      symbol &&
-      INSTITUTIONAL_TOKENS.includes(
-        symbol.toUpperCase()
-      )
-    ) {
-      findings.push(
-        "Institutional liquidity architecture detected"
-      );
-
-      findings.push(
-        "Multi-venue liquidity management verified"
-      );
-
-      findings.push(
-        "Protocol-managed treasury liquidity"
-      );
-
+    if (isInstitutional(symbol)) {
       return {
         locked: true,
         risky: false,
-        findings,
+        findings: [
+          "Institutional liquidity architecture detected",
+          "Multi-venue liquidity management verified",
+          "Protocol-managed treasury liquidity",
+        ],
       };
     }
 
-    /**
-     * STEP 2
-     * Explorer source analysis
-     */
+    const url = explorerUrl(chain, {
+      module: "contract",
+      action: "getsourcecode",
+      address: contractAddress,
+    });
 
-    const apiKey =
-      process.env.ETHERSCAN_API_KEY;
-
-    const url = `https://api.etherscan.io/api?module=contract&action=getsourcecode&address=${contractAddress}&apikey=${apiKey}`;
-
-    const response =
-      await axios.get(url);
-
-    const sourceCode =
-      response.data?.result?.[0]
-        ?.SourceCode?.toLowerCase() || "";
+    const data = await fetchJson<any>(url);
+    const sourceCode = (data?.result?.[0]?.SourceCode || "").toLowerCase();
 
     if (!sourceCode) {
       return {
         locked: false,
         risky: true,
-        findings: [
-          "Unable to verify liquidity lock status",
-        ],
+        findings: ["Unable to verify liquidity lock status"],
       };
     }
 
-    /**
-     * STEP 3
-     * Known locker detection
-     */
+    const findings: string[] = [];
+    let risky = false;
+    let locked = false;
 
     for (const keyword of KNOWN_LOCKERS) {
       if (sourceCode.includes(keyword)) {
-        findings.push(
-          `Liquidity lock signal detected: ${keyword}`
-        );
-
+        findings.push(`Liquidity lock signal: ${keyword}`);
         locked = true;
       }
     }
 
-    /**
-     * STEP 4
-     * LP removal permissions
-     */
-
     const canRemoveLiquidity =
-      sourceCode.includes(
-        "removeliquidity"
-      ) ||
-      sourceCode.includes(
-        "withdrawliquidity"
-      ) ||
-      sourceCode.includes(
-        "removeliquidityeth"
-      ) ||
-      sourceCode.includes(
-        "withdrawlp"
-      ) ||
-      sourceCode.includes(
-        "withdrawtokens"
-      );
+      sourceCode.includes("removeliquidity") ||
+      sourceCode.includes("withdrawliquidity") ||
+      sourceCode.includes("removeliquidityeth") ||
+      sourceCode.includes("withdrawlp") ||
+      sourceCode.includes("withdrawtokens");
 
     if (canRemoveLiquidity) {
-      findings.push(
-        "Owner liquidity removal permissions detected"
-      );
-
+      findings.push("Owner liquidity-removal permissions detected");
       risky = true;
     }
-
-    /**
-     * STEP 5
-     * Burn address detection
-     */
-
-    if (
-      sourceCode.includes(
-        "0x000000000000000000000000000000000000dead"
-      )
-    ) {
-      findings.push(
-        "LP burn address detected"
-      );
-
-      locked = true;
-    }
-
-    /**
-     * STEP 6
-     * Final evaluation
-     */
 
     if (!locked) {
-      findings.push(
-        "No liquidity lock verification detected"
-      );
-
+      findings.push("No liquidity lock verification detected");
       risky = true;
     } else {
-      findings.push(
-        "Liquidity lock verification detected"
-      );
+      findings.push("Liquidity lock verification detected");
     }
 
-    /**
-     * STEP 7
-     * Strong risk escalation
-     */
-
-    if (
-      !locked &&
-      canRemoveLiquidity
-    ) {
-      findings.push(
-        "Critical liquidity rug-pull risk detected"
-      );
-
+    if (!locked && canRemoveLiquidity) {
+      findings.push("Critical liquidity rug-pull risk");
       risky = true;
     }
 
-    return {
-      locked,
-      risky,
-      findings,
-    };
+    return { locked, risky, findings };
   } catch (error) {
-    console.error(
-      "Liquidity lock check failed:",
-      error
-    );
-
-    return {
-      locked: false,
-      risky: true,
-      findings: [
-        "Liquidity analysis unavailable",
-      ],
-    };
+    debug("Liquidity lock check failed:", error);
+    return { locked: false, risky: true, findings: ["Liquidity analysis unavailable"] };
   }
 }
