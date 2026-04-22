@@ -10,7 +10,7 @@ const INSTITUTIONAL_TOKENS = [
   "BTC",
 ];
 
-export async function checkDexPair(
+export async function checkLiquiditySource(
   contractAddress: string,
   symbol?: string
 ) {
@@ -117,7 +117,7 @@ export async function checkDexPair(
     };
   } catch (error) {
     console.error(
-      "DEX pair check failed:",
+      "Liquidity source check failed:",
       error
     );
 
