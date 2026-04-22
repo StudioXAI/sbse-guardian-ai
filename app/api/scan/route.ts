@@ -4,6 +4,7 @@ import { checkHolderRisk } from "@/lib/checkHolderRisk";
 import { fetchTokenIdentity } from "@/lib/fetchTokenIdentity";
 import { checkLiquidityLock } from "@/lib/checkLiquidityLock";
 import { checkWalletTraps } from "@/lib/checkWalletTraps";
+import { detectChain } from "@/lib/detectChain";
 import { NextResponse } from "next/server";
 import axios from "axios";
 
@@ -27,9 +28,29 @@ export async function POST(req: Request) {
     }
 
     /**
+     * STEP 0
+     * UNIVERSAL CHAIN DETECTION ENGINE
+     */
+
+    const detectedChain = await detectChain(contractAddress);
+
+    if (!detectedChain.found) {
+      return NextResponse.json({
+        success: false,
+        message: "Contract not found on supported chains",
+      });
+    }
+
+    console.log(
+      "Detected chain:",
+      detectedChain.chainName
+    );
+
+    /**
      * STEP 1
      * Smart Identity Engine FIRST
      */
+
     const identity = await fetchTokenIdentity(contractAddress);
     const tokenSymbol = identity.symbol || "";
 
@@ -37,6 +58,7 @@ export async function POST(req: Request) {
      * STEP 2
      * Dynamic INFI Shield Verification
      */
+
     const infiProjects = await fetchInfiProjects();
 
     const matchedProject = infiProjects.find((project) => {
@@ -58,18 +80,29 @@ export async function POST(req: Request) {
     /**
      * VERIFIED PROJECT
      */
+
     if (matchedProject) {
       return NextResponse.json({
         success: true,
         isSbSeVerified: true,
         project: matchedProject.name,
         contractAddress,
+
+        chain: detectedChain.chainName,
+        chainId: detectedChain.chainId,
+        nativeToken: detectedChain.symbol,
+
         verified: true,
         tokenType: "Protected Launchpad Project",
         riskScore: 1,
         sbseScore: "10+",
+
+        professionalScore: 0,
+        professionalLabel: "Institutional Grade",
+
         rugPullProbability: 0,
         rugPullRisk: "Very Safe",
+
         findings: [
           "🟢 SbSe Shield Active",
           `Listed on INFI MultiChain CDEX (${matchedProject.status})`,
@@ -78,6 +111,7 @@ export async function POST(req: Request) {
           "Protected by SbSe Protocol",
           "AI Rug Pull Prediction: 0% (Very Safe)",
         ],
+
         beginnerExplanation:
           "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system.",
       });
@@ -85,17 +119,23 @@ export async function POST(req: Request) {
 
     /**
      * STEP 3
-     * Continue deep analysis for non-verified projects
+     * Continue deep analysis
      */
 
     const dexInfo = await checkDexPair(contractAddress);
     const holderRisk = await checkHolderRisk(contractAddress);
-    const liquidityLock = await checkLiquidityLock(contractAddress);
-    const walletTrap = await checkWalletTraps(contractAddress);
+    const liquidityLock =
+      await checkLiquidityLock(contractAddress);
+    const walletTrap =
+      await checkWalletTraps(contractAddress);
+
+    /**
+     * Dynamic explorer API
+     */
 
     const apiKey = process.env.ETHERSCAN_API_KEY;
 
-    const url = `https://api.etherscan.io/api?module=contract&action=getsourcecode&address=${contractAddress}&apikey=${apiKey}`;
+    const url = `${detectedChain.explorerApi}?module=contract&action=getsourcecode&address=${contractAddress}&apikey=${apiKey}`;
 
     const response = await axios.get(url);
     const data = response.data?.result?.[0];
@@ -107,14 +147,21 @@ export async function POST(req: Request) {
       });
     }
 
-    const sourceCode = (data.SourceCode || "").toLowerCase();
-    const compilerVersion = data.CompilerVersion || "Unknown";
+    const sourceCode =
+      (data.SourceCode || "").toLowerCase();
+
+    const compilerVersion =
+      data.CompilerVersion || "Unknown";
+
     const verified = !!data.SourceCode;
 
     let tokenType = "Unknown";
 
-    if (sourceCode.includes("erc20")) tokenType = "ERC20";
-    if (sourceCode.includes("erc721")) tokenType = "ERC721";
+    if (sourceCode.includes("erc20"))
+      tokenType = "ERC20";
+
+    if (sourceCode.includes("erc721"))
+      tokenType = "ERC721";
 
     const findings = [];
     let riskScore = 2;
@@ -122,6 +169,9 @@ export async function POST(req: Request) {
     /**
      * Identity Layer
      */
+
+    findings.push(`Detected Chain: ${detectedChain.chainName}`);
+    findings.push(`Native Token: ${detectedChain.symbol}`);
     findings.push(`Token Symbol: ${identity.symbol}`);
     findings.push(`DEX Source: ${identity.dex}`);
     findings.push(`Market Cap: ${identity.marketCap}`);
@@ -136,10 +186,15 @@ export async function POST(req: Request) {
     /**
      * DEX Layer
      */
+
     if (dexInfo.found) {
       findings.push(`DEX Pair Found: ${dexInfo.dex}`);
-      findings.push(`Liquidity Present: ${dexInfo.liquidity}`);
-      findings.push(`24H Volume: ${dexInfo.volume24h}`);
+      findings.push(
+        `Liquidity Present: ${dexInfo.liquidity}`
+      );
+      findings.push(
+        `24H Volume: ${dexInfo.volume24h}`
+      );
     } else {
       findings.push("No Active DEX Pair Found");
       findings.push("High Rug Pull Probability");
@@ -149,6 +204,7 @@ export async function POST(req: Request) {
     /**
      * Holder Layer
      */
+
     findings.push(
       `Top Holder Controls ${holderRisk.topHolderPercent}%`
     );
@@ -163,6 +219,7 @@ export async function POST(req: Request) {
     /**
      * Liquidity Lock Layer
      */
+
     findings.push(...liquidityLock.findings);
 
     if (liquidityLock.risky) {
@@ -170,18 +227,22 @@ export async function POST(req: Request) {
     }
 
     /**
-     * Wallet Trap Detection Layer
+     * Wallet Trap Detection
      */
+
     findings.push(...walletTrap.findings);
 
     if (walletTrap.risky) {
-      findings.push("Suspicious wallet trap behavior detected");
+      findings.push(
+        "Suspicious wallet trap behavior detected"
+      );
       riskScore += 2;
     }
 
     /**
      * Manual Smart Contract Checks
      */
+
     if (sourceCode.includes("mint")) {
       findings.push("Mint function detected");
       riskScore += 2;
@@ -201,9 +262,13 @@ export async function POST(req: Request) {
       sourceCode.includes("renounceownership") ||
       sourceCode.includes("ownershiprenounced")
     ) {
-      findings.push("Ownership renounce function exists");
+      findings.push(
+        "Ownership renounce function exists"
+      );
     } else {
-      findings.push("Ownership renounce not detected");
+      findings.push(
+        "Ownership renounce not detected"
+      );
       riskScore += 2;
     }
 
@@ -237,9 +302,7 @@ export async function POST(req: Request) {
      * Professional Analyzer Engine
      */
 
-    const rpcUrl =
-      process.env.NEXT_PUBLIC_ETH_RPC_URL ||
-      "https://eth.llamarpc.com";
+    const rpcUrl = detectedChain.rpc;
 
     const honeypotResult = await honeypotCheck(
       contractAddress,
@@ -256,17 +319,18 @@ export async function POST(req: Request) {
       rpcUrl
     );
 
-    const professionalScore = calculateRiskScore([
-      honeypotResult,
-      ownerResult,
-      liquidityResult,
-    ]);
+    const professionalScore =
+      calculateRiskScore([
+        honeypotResult,
+        ownerResult,
+        liquidityResult,
+      ]);
 
     const professionalReport =
       buildSecurityReport(professionalScore);
 
     /**
-     * AI Rug Pull Prediction Engine
+     * AI Rug Pull Prediction
      */
 
     const rugPrediction = predictRugPull(
@@ -288,30 +352,44 @@ export async function POST(req: Request) {
     /**
      * FINAL RESPONSE
      */
+
     return NextResponse.json({
       success: true,
       isSbSeVerified: false,
+
       project: identity.projectName,
       contractAddress,
+
+      chain: detectedChain.chainName,
+      chainId: detectedChain.chainId,
+      nativeToken: detectedChain.symbol,
+
       compilerVersion,
       verified,
       tokenType,
 
       riskScore: Math.min(riskScore, 10),
 
-      professionalScore: professionalScore.score,
-      professionalLabel: professionalScore.label,
+      professionalScore:
+        professionalScore.score,
+
+      professionalLabel:
+        professionalScore.label,
+
       professionalReport,
 
-      rugPullProbability: rugPrediction.rugProbability,
-      rugPullRisk: rugPrediction.label,
+      rugPullProbability:
+        rugPrediction.rugProbability,
+
+      rugPullRisk:
+        rugPrediction.label,
 
       sbseScore: 10,
       findings,
       website: identity.website,
 
       beginnerExplanation:
-        "This report includes SbSe Shield verification, smart token identity detection, DEX verification, holder concentration analysis, liquidity intelligence, liquidity lock verification, wallet trap detection, proxy detection, AI rug pull prediction, and full professional contract analyzer scoring.",
+        "This report includes universal multichain detection, SbSe Shield verification, smart token identity detection, DEX verification, holder concentration analysis, liquidity intelligence, liquidity lock verification, wallet trap detection, proxy detection, AI rug pull prediction, and full professional contract analyzer scoring.",
     });
   } catch (error) {
     console.error(error);
