@@ -43,13 +43,14 @@ export interface ChainInfo {
 
 /**
  * Build an explorer API URL for the CORRECT chain.
- * Analyzers must use this instead of hardcoding etherscan.io.
+ * Automatically includes chainid for Etherscan V2 unified endpoint.
  */
 export function explorerUrl(
-  chain: Pick<ChainInfo, "explorerApi" | "explorerApiKey">,
+  chain: Pick<ChainInfo, "explorerApi" | "explorerApiKey" | "chainIdNum">,
   params: Record<string, string>,
 ): string {
   const search = new URLSearchParams({
+    chainid: String(chain.chainIdNum),
     ...params,
     apikey: chain.explorerApiKey,
   });

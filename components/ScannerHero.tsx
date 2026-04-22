@@ -48,9 +48,10 @@ const ScannerHero = forwardRef<HTMLInputElement, ScannerHeroProps>(function Scan
 
       <p className="text-lg md:text-xl leading-relaxed max-w-2xl mb-12 anim-fade-up"
          style={{ color: "var(--fg-muted)", animationDelay: "0.1s" }}>
-        Paste any contract on Ethereum, BSC, Polygon, Base, Arbitrum, or
-        Avalanche. The Guardian agent returns a plain-English verdict in
-        seconds — backed by nine layers of on-chain intelligence.
+        Paste any contract on Ethereum, Base, Arbitrum, BSC, Polygon,
+        Optimism &mdash; or <span style={{ color: "var(--fg)" }}>30+ other EVM chains</span>. The Guardian
+        agent returns a plain-English verdict in seconds, backed by nine
+        layers of on-chain intelligence.
       </p>
 
       {/* Scanner card */}

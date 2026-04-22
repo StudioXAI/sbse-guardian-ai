@@ -1,10 +1,12 @@
 /* ─────────────────────────────────────────────────────────────
    Universal Chain Detection Engine
-   Fixes over the original:
-   - Uses per-chain API keys (no more sending Etherscan key to BscScan)
-   - Parallel chain scanning (was sequential → ~6x slower)
-   - AbortController timeouts instead of axios defaults
-   - Returns a typed ChainInfo consumed by every analyzer
+   Strategy:
+   - Etherscan V2 supports 35 mainnets via one unified endpoint.
+   - Rather than fire 35 parallel requests (rate-limit suicide on
+     free tier), we run a concurrency-limited worker pool that
+     scans in priority order (tier 1 → 2 → 3) and stops on the
+     first hit.
+   - RPC fallback runs only if no explorer returns a match.
    ───────────────────────────────────────────────────────────── */
 
 import {
@@ -19,12 +21,12 @@ export interface DetectedChain extends ChainInfo {
   found: boolean;
 }
 
+/** How many explorer probes to run in parallel. Free-tier safe (5/sec). */
+const MAX_CONCURRENCY = 5;
+
 const DEFAULT_RPC = "https://eth.llamarpc.com";
 
-function toChainInfo(
-  chain: ChainEntry,
-  scannerType: string,
-): ChainInfo {
+function toChainInfo(chain: ChainEntry, scannerType: string): ChainInfo {
   return {
     chainId: chain.id,
     chainName: chain.name,
@@ -46,7 +48,8 @@ async function probeExplorer(
     if (!chain.explorerApi) return null;
 
     const url =
-      `${chain.explorerApi}?module=contract&action=getsourcecode` +
+      `${chain.explorerApi}?chainid=${chain.chainIdNum}` +
+      `&module=contract&action=getsourcecode` +
       `&address=${contractAddress}&apikey=${apiKey}`;
 
     const data = await fetchJson<any>(url, 8_000);
@@ -59,7 +62,6 @@ async function probeExplorer(
       result.ABI !== "Invalid Address format";
 
     if (!hasContract) return null;
-
     return toChainInfo(chain, "Explorer API");
   } catch {
     debug("Explorer probe failed:", chain.name);
@@ -87,35 +89,61 @@ async function probeRpc(
   }
 }
 
-/** Pick the first fulfilled+truthy result from a settled array. */
-function firstHit<T>(results: PromiseSettledResult<T | null>[]): T | null {
-  for (const r of results) {
-    if (r.status === "fulfilled" && r.value) return r.value;
+/**
+ * Concurrency-limited worker pool.
+ * Processes `items` in order, up to `concurrency` at a time.
+ * Returns as soon as any worker finds a match; remaining work is abandoned.
+ */
+async function raceWithLimit<T>(
+  items: ChainEntry[],
+  probe: (c: ChainEntry) => Promise<T | null>,
+  concurrency: number,
+): Promise<T | null> {
+  const queue = [...items];
+  let winner: T | null = null;
+
+  async function worker(): Promise<void> {
+    while (queue.length > 0 && winner === null) {
+      const item = queue.shift();
+      if (!item) return;
+      const result = await probe(item);
+      if (result !== null && winner === null) {
+        winner = result;
+        return;
+      }
+    }
   }
-  return null;
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, () =>
+    worker(),
+  );
+  await Promise.all(workers);
+  return winner;
 }
 
 export async function detectChain(
   contractAddress: string,
 ): Promise<DetectedChain> {
-  /* Step 1: Parallel explorer probe. */
-  const explorerResults = await Promise.allSettled(
-    CHAIN_REGISTRY.map((c) => probeExplorer(c, contractAddress)),
+  /* ── Explorer detection (tiered) ── */
+  /* Sort by tier so popular chains get checked first. */
+  const sorted = [...CHAIN_REGISTRY].sort((a, b) => a.tier - b.tier);
+
+  const explorerHit = await raceWithLimit(
+    sorted,
+    (c) => probeExplorer(c, contractAddress),
+    MAX_CONCURRENCY,
   );
-  const explorerHit = firstHit(explorerResults);
   if (explorerHit) return { ...explorerHit, found: true };
 
-  /* Step 2: Parallel RPC fallback. */
-  const rpcResults = await Promise.allSettled(
-    CHAIN_REGISTRY.map((c) => probeRpc(c, contractAddress)),
+  /* ── RPC fallback (tier 1 only — only popular chains have reliable public RPCs) ── */
+  const tier1 = CHAIN_REGISTRY.filter((c) => c.tier === 1 && c.rpc);
+  const rpcHit = await raceWithLimit(
+    tier1,
+    (c) => probeRpc(c, contractAddress),
+    3,
   );
-  const rpcHit = firstHit(rpcResults);
   if (rpcHit) return { ...rpcHit, found: true };
 
-  /* Step 3: Not found — return Ethereum defaults so calling code
-     has a valid ChainInfo shape to work with. */
-  return {
-    ...toChainInfo(CHAIN_REGISTRY[0], "Fallback"),
-    found: false,
-  };
+  /* ── Not found anywhere ── */
+  return { ...toChainInfo(CHAIN_REGISTRY[0], "Fallback"), found: false };
 }

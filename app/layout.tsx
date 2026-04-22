@@ -22,7 +22,7 @@ const jetbrains = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "SbSe Guardian — Multichain Smart Contract Intelligence",
   description:
-    "Don't audit code. Ask the agent. Institutional-grade smart-contract analysis across Ethereum, BSC, Polygon, Base, Arbitrum, and Avalanche.",
+    "Don't audit code. Ask the agent. Institutional-grade smart-contract analysis across 35+ EVM chains — Ethereum, Base, Arbitrum, BSC, Polygon, Optimism, and more.",
   applicationName: "SbSe Guardian",
   authors: [{ name: "SbSe Protocol" }],
   keywords: [
