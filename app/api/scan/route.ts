@@ -27,21 +27,35 @@ export async function POST(req: Request) {
       });
     }
 
-    const sourceCode = data.SourceCode || "";
+    const sourceCode = (data.SourceCode || "").toLowerCase();
     const contractName = data.ContractName || "Unknown Project";
 
     const findings = [];
+    let riskScore = 2;
 
     if (sourceCode.includes("mint")) {
       findings.push("Mint function detected");
-    }
-
-    if (sourceCode.includes("owner")) {
-      findings.push("Owner privileges detected");
+      riskScore += 2;
     }
 
     if (sourceCode.includes("blacklist")) {
       findings.push("Blacklist function detected");
+      riskScore += 2;
+    }
+
+    if (sourceCode.includes("owner")) {
+      findings.push("Owner privileges detected");
+      riskScore += 1;
+    }
+
+    if (
+      sourceCode.includes("renounceownership") ||
+      sourceCode.includes("ownershiprenounced")
+    ) {
+      findings.push("Ownership renounce function exists");
+    } else {
+      findings.push("Ownership renounce not detected");
+      riskScore += 2;
     }
 
     if (findings.length === 0) {
@@ -52,18 +66,18 @@ export async function POST(req: Request) {
       success: true,
       project: contractName,
       contractAddress,
-      riskScore: findings.length + 2,
+      riskScore: Math.min(riskScore, 10),
       sbseScore: 10,
       findings,
       beginnerExplanation:
-        "This analysis checks for common rug-pull patterns like mint access, owner privileges, and blacklist functions.",
+        "This audit checks for mint access, blacklist risks, owner privileges, and whether ownership can be renounced — one of the strongest investor safety indicators.",
     });
   } catch (error) {
     console.error(error);
 
     return NextResponse.json({
       success: false,
-      message: "Real scan failed",
+      message: "Advanced scan failed",
     });
   }
 }
