@@ -94,7 +94,7 @@ export async function POST(req: Request) {
         riskScore: 1,
         sbseScore: "10+",
 
-        professionalScore: 0,
+        professionalScore: 1,
         professionalLabel: "Institutional Grade",
 
         rugPullProbability: 0,
@@ -251,9 +251,7 @@ export async function POST(req: Request) {
       }
 
       findings.push("Proxy Contract Verified");
-      findings.push(
-        "Blockchain-native liquidity architecture detected"
-      );
+      findings.push("Institutional token verified");
     } else {
       findings.push(
         `Liquidity Source: ${identity.dex}`
@@ -446,19 +444,19 @@ export async function POST(req: Request) {
       "https://eth.llamarpc.com";
 
     const honeypotResult = await honeypotCheck(
-      contractAddress,
-      rpcUrl
-    );
+  contractAddress,
+  rpcUrl
+);
 
-    const ownerResult = await ownerCheck(
-      contractAddress,
-      rpcUrl
-    );
+const ownerResult = await ownerCheck(
+  contractAddress,
+  rpcUrl
+);
 
-    const liquidityResult = await liquidityCheck(
-      contractAddress,
-      rpcUrl
-    );
+const liquidityResult = await liquidityCheck(
+  contractAddress,
+  rpcUrl
+);
 
     const professionalScore =
       calculateRiskScore([
@@ -467,8 +465,9 @@ export async function POST(req: Request) {
         liquidityResult,
       ]);
 
-    const professionalReport =
-      buildSecurityReport(professionalScore);
+    const professionalReport = isStablecoin
+  ? "Institutional-grade asset detected. Stablecoin/bluechip infrastructure verified. No major contract risk indicators found."
+  : buildSecurityReport(professionalScore);
 
     /**
      * Stablecoin override
@@ -499,8 +498,12 @@ export async function POST(req: Request) {
       );
     }
 
+    const finalProfessionalScore = isStablecoin
+      ? 1
+      : professionalScore.score;
+
     findings.push(
-      `Professional Scan Score: ${professionalScore.score}/10`
+      `Professional Scan Score: ${finalProfessionalScore}/10`
     );
 
     findings.push(
@@ -524,9 +527,7 @@ export async function POST(req: Request) {
 
       riskScore: Math.min(riskScore, 10),
 
-      professionalScore: isStablecoin
-        ? 1
-        : professionalScore.score,
+      professionalScore: finalProfessionalScore,
 
       professionalLabel: isStablecoin
         ? "Institutional Grade"

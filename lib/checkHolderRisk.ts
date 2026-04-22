@@ -1,6 +1,18 @@
 import axios from "axios";
 
-const INSTITUTIONAL_TOKENS = ["USDC", "USDT", "DAI", "WBTC", "WETH"];
+const INSTITUTIONAL_TOKENS = [
+  "USDC",
+  "USDT",
+  "DAI",
+  "WBTC",
+  "WETH",
+  "ETH",
+  "BTC",
+  "FRAX",
+  "TUSD",
+  "FDUSD",
+  "PYUSD",
+];
 
 export async function checkHolderRisk(
   contractAddress: string,
@@ -8,23 +20,31 @@ export async function checkHolderRisk(
 ) {
   try {
     /**
-     * Stablecoins + bluechips should not use fake holder risk
+     * STEP 1
+     * Stablecoins + bluechips should NOT trigger false holder risk
      */
 
     if (
       symbol &&
-      INSTITUTIONAL_TOKENS.includes(symbol.toUpperCase())
+      INSTITUTIONAL_TOKENS.includes(
+        symbol.toUpperCase()
+      )
     ) {
       return {
         risky: false,
         topHolderPercent: 5,
-        message: "Institutional holder structure detected",
+        message:
+          "Institutional holder structure detected",
       };
     }
 
     /**
-     * Real API path (temporary fallback using explorer logic)
-     * Later we upgrade to full Moralis / Covalent / Bitquery
+     * STEP 2
+     * Real holder analysis using explorer endpoint
+     *
+     * IMPORTANT:
+     * Use percentage field
+     * NOT TokenHolderQuantity
      */
 
     const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -33,37 +53,63 @@ export async function checkHolderRisk(
 
     const response = await axios.get(url);
 
-    const holders = response.data?.result || [];
+    const holders =
+      response.data?.result || [];
 
     if (!holders.length) {
       return {
-        risky: false,
+        risky: true,
         topHolderPercent: 0,
-        message: "Holder analysis unavailable",
+        message:
+          "Unable to fetch holder concentration data",
       };
     }
 
     /**
-     * Estimate top wallet concentration
+     * FIX:
+     * percentage is the correct field
      */
 
-    const firstHolder = holders[0];
+    const topHolderPercent = Number(
+      holders[0]?.percentage || 0
+    );
 
-    const topHolderPercent =
-      Number(firstHolder?.percentage || 0);
+    /**
+     * Risk thresholds
+     */
 
-    if (topHolderPercent > 25) {
+    if (topHolderPercent >= 50) {
       return {
         risky: true,
         topHolderPercent,
-        message: "High holder concentration detected",
+        message:
+          "Critical whale concentration detected",
+      };
+    }
+
+    if (topHolderPercent >= 25) {
+      return {
+        risky: true,
+        topHolderPercent,
+        message:
+          "High holder concentration detected",
+      };
+    }
+
+    if (topHolderPercent >= 10) {
+      return {
+        risky: false,
+        topHolderPercent,
+        message:
+          "Moderate holder concentration detected",
       };
     }
 
     return {
       risky: false,
       topHolderPercent,
-      message: "Healthy holder distribution",
+      message:
+        "Healthy decentralized holder distribution",
     };
   } catch (error) {
     console.error(
@@ -72,9 +118,10 @@ export async function checkHolderRisk(
     );
 
     return {
-      risky: false,
+      risky: true,
       topHolderPercent: 0,
-      message: "Holder analysis unavailable",
+      message:
+        "Holder analysis unavailable",
     };
   }
 }

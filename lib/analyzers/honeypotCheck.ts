@@ -1,13 +1,54 @@
 import { ethers } from "ethers";
 
+const INSTITUTIONAL_TOKENS = [
+  "USDC",
+  "USDT",
+  "DAI",
+  "WETH",
+  "WBTC",
+  "ETH",
+  "BTC",
+];
+
 export async function honeypotCheck(
   tokenAddress: string,
-  rpcUrl: string
+  rpcUrl: string,
+  symbol?: string
 ) {
   try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    /**
+     * STEP 1
+     * Institutional token override
+     *
+     * Stablecoins + bluechips should NOT be flagged
+     * for normal admin functions like mint/pause/owner
+     */
 
-    const code = await provider.getCode(tokenAddress);
+    if (
+      symbol &&
+      INSTITUTIONAL_TOKENS.includes(
+        symbol.toUpperCase()
+      )
+    ) {
+      return {
+        safe: true,
+        risk: "LOW",
+        message:
+          "Institutional token detected — honeypot risk bypassed",
+        scoreImpact: 0,
+      };
+    }
+
+    /**
+     * STEP 2
+     * Standard smart contract scan
+     */
+
+    const provider =
+      new ethers.JsonRpcProvider(rpcUrl);
+
+    const code =
+      await provider.getCode(tokenAddress);
 
     if (!code || code === "0x") {
       return {
@@ -17,6 +58,11 @@ export async function honeypotCheck(
         scoreImpact: 4,
       };
     }
+
+    /**
+     * STEP 3
+     * Suspicious honeypot patterns
+     */
 
     const suspiciousPatterns = [
       "blacklist",
@@ -33,11 +79,13 @@ export async function honeypotCheck(
       "unpause",
     ];
 
-    let foundFlags = [];
+    const bytecode = code.toLowerCase();
+
+    let foundFlags: string[] = [];
 
     for (const pattern of suspiciousPatterns) {
       if (
-        code.toLowerCase().includes(
+        bytecode.includes(
           pattern.toLowerCase()
         )
       ) {
@@ -56,13 +104,24 @@ export async function honeypotCheck(
       };
     }
 
+    /**
+     * STEP 4
+     * Safe result
+     */
+
     return {
       safe: true,
       risk: "LOW",
-      message: "No major honeypot patterns detected",
+      message:
+        "No major honeypot patterns detected",
       scoreImpact: 0,
     };
   } catch (error) {
+    console.error(
+      "Honeypot analysis failed:",
+      error
+    );
+
     return {
       safe: false,
       risk: "UNKNOWN",

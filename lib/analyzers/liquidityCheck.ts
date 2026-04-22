@@ -1,13 +1,54 @@
 import { ethers } from "ethers";
 
+const INSTITUTIONAL_TOKENS = [
+  "USDC",
+  "USDT",
+  "DAI",
+  "WETH",
+  "WBTC",
+  "ETH",
+  "BTC",
+];
+
 export async function liquidityCheck(
   tokenAddress: string,
-  rpcUrl: string
+  rpcUrl: string,
+  symbol?: string
 ) {
   try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    /**
+     * STEP 1
+     * Institutional token override
+     *
+     * Stablecoins + bluechips should NOT be penalized
+     * for treasury / liquidity control functions.
+     */
 
-    const code = await provider.getCode(tokenAddress);
+    if (
+      symbol &&
+      INSTITUTIONAL_TOKENS.includes(
+        symbol.toUpperCase()
+      )
+    ) {
+      return {
+        safe: true,
+        risk: "LOW",
+        message:
+          "Institutional token detected — managed liquidity architecture accepted",
+        scoreImpact: 0,
+      };
+    }
+
+    /**
+     * STEP 2
+     * Standard smart contract scan
+     */
+
+    const provider =
+      new ethers.JsonRpcProvider(rpcUrl);
+
+    const code =
+      await provider.getCode(tokenAddress);
 
     if (!code || code === "0x") {
       return {
@@ -18,15 +59,16 @@ export async function liquidityCheck(
       };
     }
 
-    /*
-      Basic first-layer liquidity risk detection.
-
-      Later we will upgrade this to:
-      - LP lock verification
-      - pair reserve analysis
-      - liquidity unlock schedule
-      - real-time DEX pool validation
-    */
+    /**
+     * STEP 3
+     * Basic liquidity risk detection
+     *
+     * Future upgrades:
+     * - LP lock verification
+     * - pair reserve analysis
+     * - liquidity unlock schedule
+     * - real-time DEX pool validation
+     */
 
     const suspiciousPatterns = [
       "removeLiquidity",
@@ -40,17 +82,24 @@ export async function liquidityCheck(
       "withdrawUSDT",
     ];
 
+    const bytecode = code.toLowerCase();
+
     let foundFlags: string[] = [];
 
     for (const pattern of suspiciousPatterns) {
       if (
-        code.toLowerCase().includes(
+        bytecode.includes(
           pattern.toLowerCase()
         )
       ) {
         foundFlags.push(pattern);
       }
     }
+
+    /**
+     * STEP 4
+     * Suspicious liquidity controls found
+     */
 
     if (foundFlags.length > 0) {
       return {
@@ -63,6 +112,11 @@ export async function liquidityCheck(
       };
     }
 
+    /**
+     * STEP 5
+     * Safe result
+     */
+
     return {
       safe: true,
       risk: "LOW",
@@ -71,6 +125,11 @@ export async function liquidityCheck(
       scoreImpact: 0,
     };
   } catch (error) {
+    console.error(
+      "Liquidity analysis failed:",
+      error
+    );
+
     return {
       safe: false,
       risk: "UNKNOWN",

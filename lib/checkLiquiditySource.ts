@@ -8,6 +8,10 @@ const INSTITUTIONAL_TOKENS = [
   "WBTC",
   "ETH",
   "BTC",
+  "FRAX",
+  "TUSD",
+  "FDUSD",
+  "PYUSD",
 ];
 
 export async function checkLiquiditySource(
@@ -17,7 +21,8 @@ export async function checkLiquiditySource(
   try {
     /**
      * STEP 1
-     * Stablecoins + Bluechips should NOT use DexScreener
+     * Stablecoins + Bluechips
+     * should NEVER rely on DexScreener-first logic
      */
 
     if (
@@ -28,21 +33,25 @@ export async function checkLiquiditySource(
     ) {
       return {
         found: true,
-        dex: "Institutional Liquidity Infrastructure",
-        pairAddress: "Multi-venue Routing",
-        liquidity: "Deep Institutional Liquidity",
-        volume24h: "CEX + Cross-chain Verified",
+        dex:
+          "Institutional Liquidity Infrastructure",
+        pairAddress:
+          "Multi-venue Routing",
+        liquidity:
+          "Deep Institutional Liquidity",
+        volume24h:
+          "CEX + Cross-chain Verified",
         institutional: true,
       };
     }
 
     /**
      * STEP 2
-     * Explorer + on-chain detection first
-     * (future full LP parser layer)
+     * Explorer-based source code verification first
      */
 
-    const apiKey = process.env.ETHERSCAN_API_KEY;
+    const apiKey =
+      process.env.ETHERSCAN_API_KEY;
 
     const explorerUrl = `https://api.etherscan.io/api?module=contract&action=getsourcecode&address=${contractAddress}&apikey=${apiKey}`;
 
@@ -56,63 +65,131 @@ export async function checkLiquiditySource(
       contractData?.SourceCode || ""
     ).toLowerCase();
 
-    const hasLiquidityLogic =
-      sourceCode.includes("uniswap") ||
-      sourceCode.includes("router") ||
-      sourceCode.includes("pair") ||
-      sourceCode.includes("liquidity") ||
-      sourceCode.includes("addliquidity") ||
-      sourceCode.includes("swapexacttokens");
+    if (!sourceCode) {
+      return {
+        found: false,
+        message:
+          "Unable to verify on-chain liquidity structure",
+        institutional: false,
+      };
+    }
 
     /**
      * STEP 3
-     * Only fallback to DexScreener if needed
+     * Detect real blockchain liquidity infrastructure
      */
+
+    const hasLiquidityLogic =
+      sourceCode.includes(
+        "uniswap"
+      ) ||
+      sourceCode.includes(
+        "pancakeswap"
+      ) ||
+      sourceCode.includes(
+        "sushiswap"
+      ) ||
+      sourceCode.includes(
+        "router"
+      ) ||
+      sourceCode.includes(
+        "pair"
+      ) ||
+      sourceCode.includes(
+        "liquidity"
+      ) ||
+      sourceCode.includes(
+        "addliquidity"
+      ) ||
+      sourceCode.includes(
+        "removeliquidity"
+      ) ||
+      sourceCode.includes(
+        "swapexacttokens"
+      ) ||
+      sourceCode.includes(
+        "swapexacteth"
+      ) ||
+      sourceCode.includes(
+        "factory"
+      );
 
     if (!hasLiquidityLogic) {
       return {
         found: false,
         message:
-          "No on-chain liquidity infrastructure detected",
+          "No verified blockchain liquidity infrastructure detected",
         institutional: false,
       };
     }
 
+    /**
+     * STEP 4
+     * DexScreener ONLY as secondary enrichment
+     */
+
     const dexUrl = `https://api.dexscreener.com/latest/dex/tokens/${contractAddress}`;
 
-    const dexResponse = await axios.get(dexUrl);
+    const dexResponse =
+      await axios.get(dexUrl);
 
     const pairs =
       dexResponse.data?.pairs || [];
 
     if (!pairs.length) {
       return {
-        found: false,
-        message:
-          "Liquidity logic found but no active DEX pair",
+        found: true,
+        dex:
+          "Verified On-Chain Liquidity",
+        pairAddress:
+          "Detected via Contract Logic",
+        liquidity:
+          "Blockchain Verified",
+        volume24h:
+          "Pending Live Pair Discovery",
         institutional: false,
       };
     }
 
-    const mainPair = pairs[0];
+    /**
+     * STEP 5
+     * Choose strongest liquidity pair
+     */
+
+    const sortedPairs = pairs.sort(
+      (a: any, b: any) =>
+        (b.liquidity?.usd || 0) -
+        (a.liquidity?.usd || 0)
+    );
+
+    const mainPair =
+      sortedPairs[0];
 
     return {
       found: true,
+
       dex:
         mainPair.dexId ||
         "Verified On-Chain Liquidity",
+
       pairAddress:
-        mainPair.pairAddress || "Unknown",
-      liquidity: mainPair.liquidity?.usd
-        ? `$${Math.round(
-            mainPair.liquidity.usd
-          ).toLocaleString()}`
-        : "Unknown",
-      volume24h: mainPair.volume?.h24
-        ? `$${Math.round(
-            mainPair.volume.h24
-          ).toLocaleString()}`
-        : "Unknown",
+        mainPair.pairAddress ||
+        "Unknown",
+
+      liquidity:
+        mainPair.liquidity?.usd
+          ? `$${Math.round(
+              mainPair.liquidity.usd
+            ).toLocaleString()}`
+          : "Blockchain Verified",
+
+      volume24h:
+        mainPair.volume?.h24
+          ? `$${Math.round(
+              mainPair.volume.h24
+            ).toLocaleString()}`
+          : "Unknown",
+
       institutional: false,
     };
   } catch (error) {

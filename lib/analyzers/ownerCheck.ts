@@ -7,12 +7,54 @@ const OWNABLE_ABI = [
 const ZERO_ADDRESS =
   "0x0000000000000000000000000000000000000000";
 
+const INSTITUTIONAL_TOKENS = [
+  "USDC",
+  "USDT",
+  "DAI",
+  "WETH",
+  "WBTC",
+  "ETH",
+  "BTC",
+];
+
 export async function ownerCheck(
   tokenAddress: string,
-  rpcUrl: string
+  rpcUrl: string,
+  symbol?: string
 ) {
   try {
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    /**
+     * STEP 1
+     * Institutional token override
+     *
+     * Stablecoins + bluechips should NOT be penalized
+     * for having active owner permissions.
+     * This is normal for regulated assets.
+     */
+
+    if (
+      symbol &&
+      INSTITUTIONAL_TOKENS.includes(
+        symbol.toUpperCase()
+      )
+    ) {
+      return {
+        safe: true,
+        risk: "LOW",
+        message:
+          "Institutional token detected — regulated ownership model accepted",
+        owner: "Institutional Governance",
+        scoreImpact: 0,
+      };
+    }
+
+    /**
+     * STEP 2
+     * Standard owner() analysis
+     */
+
+    const provider =
+      new ethers.JsonRpcProvider(rpcUrl);
 
     const contract = new ethers.Contract(
       tokenAddress,
@@ -26,12 +68,21 @@ export async function ownerCheck(
       return {
         safe: false,
         risk: "UNKNOWN",
-        message: "Owner could not be determined",
+        message:
+          "Owner could not be determined",
         scoreImpact: 1,
       };
     }
 
-    if (owner.toLowerCase() === ZERO_ADDRESS.toLowerCase()) {
+    /**
+     * STEP 3
+     * Ownership renounced
+     */
+
+    if (
+      owner.toLowerCase() ===
+      ZERO_ADDRESS.toLowerCase()
+    ) {
       return {
         safe: true,
         risk: "LOW",
@@ -41,6 +92,11 @@ export async function ownerCheck(
       };
     }
 
+    /**
+     * STEP 4
+     * Active owner detected
+     */
+
     return {
       safe: false,
       risk: "MEDIUM",
@@ -49,6 +105,11 @@ export async function ownerCheck(
       scoreImpact: 2,
     };
   } catch (error) {
+    console.error(
+      "Ownership analysis failed:",
+      error
+    );
+
     return {
       safe: false,
       risk: "UNKNOWN",

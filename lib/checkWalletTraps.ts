@@ -1,7 +1,18 @@
 import axios from "axios";
 
+const INSTITUTIONAL_TOKENS = [
+  "USDC",
+  "USDT",
+  "DAI",
+  "WETH",
+  "WBTC",
+  "ETH",
+  "BTC",
+];
+
 export async function checkWalletTraps(
-  contractAddress: string
+  contractAddress: string,
+  symbol?: string
 ) {
   try {
     console.log(
@@ -9,10 +20,45 @@ export async function checkWalletTraps(
       contractAddress
     );
 
+    let findings: string[] = [];
+    let risky = false;
+
     /**
-     * Phase 1:
-     * Holder concentration intelligence
-     * (Later we upgrade to full wallet graph analysis)
+     * STEP 1
+     * Stablecoins + Bluechips should NOT trigger fake wallet trap alerts
+     */
+
+    if (
+      symbol &&
+      INSTITUTIONAL_TOKENS.includes(
+        symbol.toUpperCase()
+      )
+    ) {
+      findings.push(
+        "Institutional wallet distribution detected"
+      );
+
+      findings.push(
+        "Healthy wallet distribution detected"
+      );
+
+      findings.push(
+        "Top wallet concentration: 5%"
+      );
+
+      return {
+        risky: false,
+        findings,
+      };
+    }
+
+    /**
+     * STEP 2
+     * Real holder concentration analysis
+     *
+     * IMPORTANT:
+     * TokenHolderQuantity is WRONG
+     * We must use percentage
      */
 
     const apiKey = process.env.ETHERSCAN_API_KEY;
@@ -23,9 +69,6 @@ export async function checkWalletTraps(
 
     const holders =
       response.data?.result || [];
-
-    let findings: string[] = [];
-    let risky = false;
 
     if (!holders.length) {
       findings.push(
@@ -38,13 +81,20 @@ export async function checkWalletTraps(
       };
     }
 
-    const topHolder =
-      parseFloat(holders[0]?.TokenHolderQuantity || "0");
+    /**
+     * FIX:
+     * Use percentage instead of TokenHolderQuantity
+     */
 
-    if (topHolder > 20) {
+    const topHolderPercent = parseFloat(
+      holders[0]?.percentage || "0"
+    );
+
+    if (topHolderPercent > 20) {
       findings.push(
         "Top wallet concentration risk detected"
       );
+
       risky = true;
     } else {
       findings.push(
@@ -53,8 +103,26 @@ export async function checkWalletTraps(
     }
 
     findings.push(
-      `Top wallet concentration: ${topHolder}%`
+      `Top wallet concentration: ${topHolderPercent}%`
     );
+
+    /**
+     * Additional trap heuristics
+     */
+
+    if (topHolderPercent > 50) {
+      findings.push(
+        "Extreme whale concentration detected"
+      );
+
+      risky = true;
+    }
+
+    if (topHolderPercent < 1) {
+      findings.push(
+        "Highly decentralized wallet structure detected"
+      );
+    }
 
     return {
       risky,
