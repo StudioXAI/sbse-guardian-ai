@@ -21,7 +21,7 @@ import { checkHolderRisk } from "@/lib/checkHolderRisk";
 import { checkLiquidityLock } from "@/lib/checkLiquidityLock";
 import { checkWalletTraps } from "@/lib/checkWalletTraps";
 import { predictRugPull } from "@/lib/predictRugPull";
-import { generateAiSummary } from "@/lib/aiSummary";
+import { generateAiSummary, generateDeepWalkthrough } from "@/lib/aiSummary";
 import { analyzeBytecode, bytecodeToFindings } from "@/lib/bytecodeAnalyzer";
 
 import { honeypotCheck } from "@/lib/analyzers/honeypotCheck";
@@ -660,6 +660,17 @@ export async function POST(req: Request) {
     } catch (e) {
       debug("AI summary generation failed:", e);
       report.aiSummary = null;
+    }
+
+    /* ── Generate deep walkthrough if requested (premium PDF only) ── */
+    const includeWalkthrough = req.nextUrl.searchParams.get("includeWalkthrough") === "1";
+    if (includeWalkthrough) {
+      try {
+        (report as any).deepWalkthrough = await generateDeepWalkthrough(report);
+      } catch (e) {
+        debug("Deep walkthrough generation failed:", e);
+        (report as any).deepWalkthrough = null;
+      }
     }
 
     return NextResponse.json(report);

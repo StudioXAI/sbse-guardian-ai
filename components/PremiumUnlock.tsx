@@ -416,7 +416,14 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
 
       {/* Flow states */}
       {status === "unlocked" ? (
-        <UnlockedState chainId={chainId as number | undefined} txHash={txHash} />
+        <UnlockedState
+          chainId={chainId as number | undefined}
+          txHash={txHash}
+          walletAddress={address || ""}
+          contractAddress={report.contractAddress}
+          projectName={report.project}
+          chainName={currentChain?.name || report.chain}
+        />
       ) : status === "verify_pending" && txHash ? (
         <VerifyPendingState
           txHash={txHash}
@@ -645,48 +652,218 @@ function SelfPayWarning({ onDisconnect }: { onDisconnect: () => void }) {
 function UnlockedState({
   chainId,
   txHash,
+  walletAddress,
+  contractAddress,
+  projectName,
+  chainName,
 }: {
   chainId?: number;
   txHash: string | null;
+  walletAddress: string;
+  contractAddress: string;
+  projectName: string;
+  chainName: string;
 }) {
   const txUrl = txHash && chainId ? explorerTxUrl(chainId, txHash) : "#";
+
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  const [email, setEmail] = useState("");
+  const [watchlistState, setWatchlistState] = useState<
+    "idle" | "submitting" | "added" | "error"
+  >("idle");
+  const [watchlistMsg, setWatchlistMsg] = useState<string | null>(null);
+
+  const downloadPdf = async () => {
+    if (!walletAddress || !contractAddress || !chainId) return;
+    setDownloadingPdf(true);
+    setPdfError(null);
+    try {
+      const url = `/api/pdf?wallet=${walletAddress}&contract=${contractAddress}&chainId=${chainId}`;
+      const res = await fetch(url);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Download failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      // Filename from Content-Disposition header if present
+      const cd = res.headers.get("Content-Disposition") || "";
+      const match = cd.match(/filename="([^"]+)"/);
+      link.download = match ? match[1] : `sbse-guardian-report.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(link.href);
+    } catch (e: any) {
+      setPdfError(e?.message || "PDF download failed");
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
+  const addToWatchlist = async () => {
+    if (!email || !walletAddress || !contractAddress || !chainId) return;
+    setWatchlistState("submitting");
+    setWatchlistMsg(null);
+    try {
+      const res = await fetch("/api/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email,
+          walletAddress,
+          contractAddress,
+          chainId,
+          chainName,
+          projectName,
+        }),
+      });
+      const json = await res.json();
+      if (json.success) {
+        setWatchlistState("added");
+        setWatchlistMsg(json.message || "Added to watchlist");
+      } else {
+        setWatchlistState("error");
+        setWatchlistMsg(json.message || "Could not add to watchlist");
+      }
+    } catch (e: any) {
+      setWatchlistState("error");
+      setWatchlistMsg("Request failed");
+    }
+  };
+
   return (
     <div
-      className="p-5 rounded-lg"
+      className="p-5 rounded-lg space-y-5"
       style={{
         background: "var(--success-dim)",
         border: "1px solid rgba(74,222,128,0.3)",
       }}
     >
-      <div className="flex items-center gap-2 mb-2" style={{ color: "var(--success)" }}>
-        <svg
-          width="18"
-          height="18"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M20 6L9 17L4 12" />
-        </svg>
-        <span className="font-semibold text-sm">Payment verified</span>
-      </div>
-      <p className="text-sm" style={{ color: "var(--fg-muted)" }}>
-        Premium features unlocked for this contract.{" "}
-        {txHash && (
-          <a
-            href={txUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono hover:underline"
-            style={{ color: "var(--accent-soft)" }}
+      {/* Verification header */}
+      <div>
+        <div className="flex items-center gap-2 mb-2" style={{ color: "var(--success)" }}>
+          <svg
+            width="18"
+            height="18"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
           >
-            View tx →
-          </a>
+            <path d="M20 6L9 17L4 12" />
+          </svg>
+          <span className="font-semibold text-sm">Payment verified</span>
+        </div>
+        <p className="text-sm" style={{ color: "var(--fg-muted)" }}>
+          Premium features unlocked for this contract.{" "}
+          {txHash && (
+            <a
+              href={txUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono hover:underline"
+              style={{ color: "var(--accent-soft)" }}
+            >
+              View tx →
+            </a>
+          )}
+        </p>
+      </div>
+
+      {/* PDF Download */}
+      <div
+        className="pt-4"
+        style={{ borderTop: "1px solid rgba(74,222,128,0.15)" }}
+      >
+        <div className="flex items-center gap-3 flex-wrap">
+          <button
+            type="button"
+            onClick={downloadPdf}
+            disabled={downloadingPdf}
+            className="px-4 py-2 rounded-lg text-sm font-medium transition hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
+            style={{
+              background: "var(--accent)",
+              color: "#fff",
+              boxShadow: "0 0 12px rgba(108,99,255,0.3)",
+            }}
+          >
+            {downloadingPdf ? "Generating PDF…" : "Download PDF report →"}
+          </button>
+          <span className="text-xs" style={{ color: "var(--fg-dim)" }}>
+            Includes AI deep walkthrough + on-chain proof
+          </span>
+        </div>
+        {pdfError && (
+          <p className="mt-2 text-xs" style={{ color: "var(--danger)" }}>
+            {pdfError}
+          </p>
         )}
-      </p>
+      </div>
+
+      {/* Watchlist */}
+      <div
+        className="pt-4"
+        style={{ borderTop: "1px solid rgba(74,222,128,0.15)" }}
+      >
+        <div className="mb-2">
+          <div className="text-sm font-medium" style={{ color: "var(--fg)" }}>
+            Watchlist this contract
+          </div>
+          <div className="text-xs" style={{ color: "var(--fg-dim)" }}>
+            Email alerts when ownership or liquidity changes significantly.
+          </div>
+        </div>
+        {watchlistState === "added" ? (
+          <div
+            className="text-xs p-3 rounded-md"
+            style={{
+              background: "rgba(74,222,128,0.08)",
+              color: "var(--success)",
+            }}
+          >
+            ✓ {watchlistMsg}
+          </div>
+        ) : (
+          <div className="flex gap-2 flex-wrap">
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="flex-1 min-w-[200px] px-3 py-2 rounded-md text-sm font-mono"
+              style={{
+                background: "var(--bg-elevated)",
+                border: "1px solid var(--border)",
+                color: "var(--fg)",
+              }}
+            />
+            <button
+              type="button"
+              onClick={addToWatchlist}
+              disabled={!email || watchlistState === "submitting"}
+              className="px-4 py-2 rounded-md text-sm font-medium transition hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{
+                background: "var(--bg-elevated)",
+                color: "var(--fg)",
+                border: "1px solid var(--border-strong)",
+              }}
+            >
+              {watchlistState === "submitting" ? "Adding…" : "Watch →"}
+            </button>
+          </div>
+        )}
+        {watchlistState === "error" && watchlistMsg && (
+          <p className="mt-2 text-xs" style={{ color: "var(--danger)" }}>
+            {watchlistMsg}
+          </p>
+        )}
+      </div>
     </div>
   );
 }
