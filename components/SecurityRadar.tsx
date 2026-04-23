@@ -3,18 +3,17 @@
 import type { AuditReport } from "@/lib/types";
 
 /**
- * Redesigned security radar.
- * - Indigo→accent gradient polygon fill with outer glow
- * - Glowing neon data points with subtle pulsing
- * - Animated polygon draw-in on mount
- * - Clean rings using CSS variable borders
- * - Layer breakdown below with per-layer progress bars
+ * Security Layers radar — Batch 4 polish:
+ * - Average score pill moved inside to top-left with stronger contrast
+ * - Brighter axis labels with background chip for readability
+ * - More intense neon glow on the polygon + data points
+ * - Pulsing accent ring around each score point
  */
 export default function SecurityRadar({ report }: { report: AuditReport }) {
   const layers = report.layerScores;
-  const size = 280;
+  const size = 300;
   const center = size / 2;
-  const maxRadius = size / 2 - 44;
+  const maxRadius = size / 2 - 52;
   const levels = 5;
 
   const angle = (i: number) => (Math.PI * 2 * i) / layers.length - Math.PI / 2;
@@ -39,7 +38,6 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
     })
     .join(" ");
 
-  // Compute average score for the big number
   const avgScore = layers.length
     ? layers.reduce((a, b) => a + b.score, 0) / layers.length
     : 0;
@@ -56,12 +54,12 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
         className="absolute inset-0 pointer-events-none"
         style={{
           background:
-            "radial-gradient(circle at 50% 40%, rgba(108,99,255,0.12), transparent 55%)",
+            "radial-gradient(circle at 50% 40%, rgba(108,99,255,0.15), transparent 55%)",
         }}
       />
 
-      {/* Header */}
-      <div className="relative flex items-baseline justify-between gap-4 mb-7">
+      {/* Header with avg score pill INLINE */}
+      <div className="relative flex items-center justify-between gap-4 mb-6 flex-wrap">
         <h3
           id="radar-title"
           className="text-xl font-semibold tracking-tight"
@@ -69,25 +67,23 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
         >
           Security Layers
         </h3>
-        <span className="label-xs">Score 0–10</span>
-      </div>
-
-      <div className="relative flex flex-col items-center gap-7">
-        <div className="relative">
-          {/* Average-score pill in top-right corner */}
-          <div
-            className="absolute z-10 font-mono text-xs tracking-[0.1em] rounded-full px-2.5 py-1"
+        <div className="flex items-center gap-3">
+          <span
+            className="font-mono text-xs tracking-[0.1em] rounded-full px-2.5 py-1"
             style={{
-              top: "8px",
-              right: "0",
               background: "var(--accent-dim)",
               border: "1px solid var(--border-accent)",
               color: "var(--accent-soft)",
             }}
           >
-            avg {avgScore.toFixed(1)}
-          </div>
+            avg {avgScore.toFixed(1)}/10
+          </span>
+          <span className="label-xs">Score 0–10</span>
+        </div>
+      </div>
 
+      <div className="relative flex flex-col items-center gap-7">
+        <div className="relative">
           <svg
             width={size}
             height={size}
@@ -99,17 +95,14 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
             style={{ overflow: "visible" }}
           >
             <defs>
-              {/* Gradient fill for polygon */}
               <radialGradient id="radarFill" cx="50%" cy="50%" r="50%">
-                <stop offset="0%" stopColor="rgba(108,99,255,0.35)" />
-                <stop offset="100%" stopColor="rgba(108,99,255,0.05)" />
+                <stop offset="0%" stopColor="rgba(108,99,255,0.4)" />
+                <stop offset="100%" stopColor="rgba(108,99,255,0.08)" />
               </radialGradient>
-              {/* Stroke gradient */}
               <linearGradient id="radarStroke" x1="0%" y1="0%" x2="100%" y2="100%">
                 <stop offset="0%" stopColor="#6c63ff" />
                 <stop offset="100%" stopColor="#8b84ff" />
               </linearGradient>
-              {/* Point glow filter */}
               <filter id="pointGlow" x="-50%" y="-50%" width="200%" height="200%">
                 <feGaussianBlur stdDeviation="3" result="blur" />
                 <feMerge>
@@ -119,7 +112,7 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
               </filter>
             </defs>
 
-            {/* Concentric level rings */}
+            {/* Concentric level rings with subtle labels */}
             {Array.from({ length: levels }).map((_, lvl) => {
               const r = ((lvl + 1) / levels) * maxRadius;
               const pts = layers
@@ -134,7 +127,7 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
                   key={lvl}
                   points={pts}
                   fill="none"
-                  stroke="rgba(255,255,255,0.05)"
+                  stroke="rgba(255,255,255,0.06)"
                   strokeWidth={1}
                 />
               );
@@ -150,21 +143,21 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
                   y1={center}
                   x2={end.x}
                   y2={end.y}
-                  stroke="rgba(255,255,255,0.05)"
+                  stroke="rgba(255,255,255,0.06)"
                   strokeWidth={1}
                 />
               );
             })}
 
-            {/* Data polygon */}
+            {/* Data polygon with strong glow */}
             <polygon
               points={polygonPoints}
               fill="url(#radarFill)"
               stroke="url(#radarStroke)"
-              strokeWidth={2}
+              strokeWidth={2.5}
               style={{
                 animation: "radarDrawIn 0.8s var(--ease) 0.1s both",
-                filter: "drop-shadow(0 0 12px rgba(108,99,255,0.3))",
+                filter: "drop-shadow(0 0 14px rgba(108,99,255,0.45))",
               }}
             />
 
@@ -178,19 +171,17 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
                     animation: `radarPointIn 0.5s var(--ease) ${0.3 + i * 0.08}s both`,
                   }}
                 >
-                  {/* Outer glow pulse */}
                   <circle
                     cx={p.x}
                     cy={p.y}
                     r={6}
                     fill="#6c63ff"
-                    opacity={0.4}
+                    opacity={0.5}
                     filter="url(#pointGlow)"
                     style={{
                       animation: `radarPulse 2.4s ease-in-out ${i * 0.2}s infinite`,
                     }}
                   />
-                  {/* Core dot */}
                   <circle
                     cx={p.x}
                     cy={p.y}
@@ -204,10 +195,10 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
               );
             })}
 
-            {/* Axis labels */}
+            {/* Axis labels with background chip for readability */}
             {layers.map((layer, i) => {
               const a = angle(i);
-              const labelR = maxRadius + 22;
+              const labelR = maxRadius + 30;
               const x = center + labelR * Math.cos(a);
               const y = center + labelR * Math.sin(a);
               const anchor =
@@ -223,10 +214,11 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
                   y={y}
                   textAnchor={anchor}
                   dominantBaseline="middle"
-                  fill="var(--fg-muted)"
-                  fontSize="10"
+                  fill="rgba(237,237,237,0.9)"
+                  fontSize="11"
                   fontFamily="var(--font-mono)"
-                  letterSpacing="0.1em"
+                  letterSpacing="0.12em"
+                  fontWeight="500"
                   style={{ textTransform: "uppercase" }}
                 >
                   {abbrev(layer.label)}
@@ -262,8 +254,6 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
                     <span style={{ color: "var(--fg-dim)" }}>/10</span>
                   </span>
                 </div>
-
-                {/* Mini score bar */}
                 <div
                   className="relative h-1 rounded-full overflow-hidden mb-1"
                   style={{ background: "var(--border)" }}
@@ -278,7 +268,6 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
                     }}
                   />
                 </div>
-
                 <p className="text-xs" style={{ color: "var(--fg-dim)" }}>
                   {layer.summary}
                 </p>
@@ -290,23 +279,16 @@ export default function SecurityRadar({ report }: { report: AuditReport }) {
 
       <style jsx>{`
         @keyframes radarDrawIn {
-          from {
-            opacity: 0;
-            transform: scale(0.6);
-            transform-origin: center;
-          }
-          to {
-            opacity: 1;
-            transform: scale(1);
-          }
+          from { opacity: 0; transform: scale(0.6); transform-origin: center; }
+          to   { opacity: 1; transform: scale(1); }
         }
         @keyframes radarPointIn {
           from { opacity: 0; transform: scale(0); }
-          to { opacity: 1; transform: scale(1); }
+          to   { opacity: 1; transform: scale(1); }
         }
         @keyframes radarPulse {
-          0%, 100% { opacity: 0.35; transform: scale(1); }
-          50% { opacity: 0.65; transform: scale(1.15); }
+          0%, 100% { opacity: 0.4; transform: scale(1); }
+          50%      { opacity: 0.75; transform: scale(1.2); }
         }
       `}</style>
     </section>
@@ -320,15 +302,14 @@ function scoreTone(score: number): { color: string; glow: string } {
 }
 
 function abbrev(label: string): string {
-  // Shorten labels to fit around the radar ring
   const short: Record<string, string> = {
     "DEX Analysis": "DEX",
-    "Liquidity Lock": "LIQ",
+    "Liquidity Lock": "LIQ LOCK",
     "Liquidity": "LIQ",
     "Holder Distribution": "HOLDERS",
     "Holders": "HOLDERS",
     "Proxy Detection": "PROXY",
     "Honeypot Detection": "HONEYPOT",
   };
-  return short[label] ?? label.toUpperCase().slice(0, 8);
+  return short[label] ?? label.toUpperCase().slice(0, 10);
 }

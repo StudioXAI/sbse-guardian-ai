@@ -1,18 +1,10 @@
 /* ─────────────────────────────────────────────────────────────
-   Payment Verification
-   Verifies on-chain USDT transfers for premium tier unlock.
+   Payment Verification — USDC $2 across 6 chains
 
-   Architecture:
-   - User sends USDT (amount >= $0.20) to RECEIVER_WALLET on one of
-     six supported chains.
-   - Client submits (txHash, chainId) to /api/unlock.
-   - This module fetches the transaction receipt, parses the Transfer
-     event from the USDT contract, and verifies:
-       1. Receipt is confirmed (status === "0x1")
-       2. Transfer event was emitted from the correct USDT address
-       3. `to` matches RECEIVER_WALLET
-       4. Value >= minimum amount
-   - On success, returns { verified: true, from, amount, chainId }.
+   Changed in Batch 4:
+   - USDT → USDC (universally supported, unlike USDT-on-Base)
+   - $0.20 → $2 minimum
+   - Normalized all decimals (most USDC is 6-decimal; BSC peg is 18)
    ───────────────────────────────────────────────────────────── */
 
 import { debug } from "./constants";
@@ -25,76 +17,70 @@ export interface PaymentChain {
   chainId: number;
   name: string;
   rpc: string;
-  /** Lowercased USDT contract address on this chain. */
-  usdt: string;
-  /** USDT decimals on this chain. */
-  usdtDecimals: number;
+  /** Lowercased USDC contract address. */
+  usdc: string;
+  usdcDecimals: number;
 }
 
-/**
- * USDT contracts on the 6 supported chains.
- * Addresses sourced from official Tether documentation and verified
- * on each chain's block explorer. All addresses lowercased for
- * case-insensitive comparison.
- */
+/** USDC on each of the 6 chains (addresses verified from Circle + chain explorers). */
 export const PAYMENT_CHAINS: Record<number, PaymentChain> = {
   1: {
     chainId: 1,
     name: "Ethereum",
     rpc: process.env.ETH_RPC_URL || "https://eth.llamarpc.com",
-    usdt: "0xdac17f958d2ee523a2206206994597c13d831ec7",
-    usdtDecimals: 6,
+    usdc: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48",
+    usdcDecimals: 6,
   },
   56: {
     chainId: 56,
     name: "BNB Smart Chain",
     rpc: process.env.BSC_RPC_URL || "https://bsc-dataseed.binance.org",
-    usdt: "0x55d398326f99059ff775485246999027b3197955",
-    usdtDecimals: 18,
+    // Binance-Peg USD Coin is 18 decimals on BSC
+    usdc: "0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d",
+    usdcDecimals: 18,
   },
   137: {
     chainId: 137,
     name: "Polygon",
     rpc: process.env.POLYGON_RPC_URL || "https://polygon-rpc.com",
-    usdt: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f",
-    usdtDecimals: 6,
+    // Native Circle-issued USDC on Polygon
+    usdc: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
+    usdcDecimals: 6,
   },
   8453: {
     chainId: 8453,
     name: "Base",
     rpc: process.env.BASE_RPC_URL || "https://mainnet.base.org",
-    // Note: Base's native USDT — fallback is USDC if not available
-    usdt: "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2",
-    usdtDecimals: 6,
+    // Circle native USDC on Base
+    usdc: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    usdcDecimals: 6,
   },
   42161: {
     chainId: 42161,
     name: "Arbitrum One",
     rpc: process.env.ARBITRUM_RPC_URL || "https://arb1.arbitrum.io/rpc",
-    usdt: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
-    usdtDecimals: 6,
+    // Native USDC on Arbitrum (not USDC.e)
+    usdc: "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+    usdcDecimals: 6,
   },
   10: {
     chainId: 10,
     name: "OP Mainnet",
     rpc: process.env.OPTIMISM_RPC_URL || "https://mainnet.optimism.io",
-    usdt: "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
-    usdtDecimals: 6,
+    // Native USDC on Optimism (not USDC.e)
+    usdc: "0x0b2c639c533813f4aa9d7837caf62653d097ff85",
+    usdcDecimals: 6,
   },
 };
 
 export const SUPPORTED_CHAIN_IDS = Object.keys(PAYMENT_CHAINS).map(Number);
 
-/**
- * Receiver wallet. Payments land here.
- * This is the user's wallet from the earlier conversation.
- */
 export const RECEIVER_WALLET =
   (process.env.PAYMENT_RECEIVER_WALLET ||
     "0x088f13E8813913aAf20b7c680e40439fF8Df445D").toLowerCase();
 
-/** Minimum payment: $0.20 USDT. */
-export const MIN_PAYMENT_USD = 0.2;
+/** Minimum payment: $2 USDC. */
+export const MIN_PAYMENT_USD = 2;
 
 export interface PaymentVerificationResult {
   verified: boolean;
@@ -106,8 +92,6 @@ export interface PaymentVerificationResult {
   chainName?: string;
   txHash?: string;
 }
-
-/* ── JSON-RPC helper ── */
 
 async function rpcCall<T>(
   rpcUrl: string,
@@ -140,9 +124,6 @@ async function rpcCall<T>(
   }
 }
 
-/* ── Address / value helpers ── */
-
-/** Pad an address to 32 bytes (for topic filtering). */
 function padAddress(addr: string): string {
   return "0x" + addr.toLowerCase().replace(/^0x/, "").padStart(64, "0");
 }
@@ -151,34 +132,21 @@ function topicToAddress(topic: string): string {
   return "0x" + topic.slice(-40).toLowerCase();
 }
 
-function hexToBigInt(hex: string): bigint {
-  return BigInt(hex);
-}
-
-/** Format a bigint token amount to a human USD-ish string. */
 function formatAmount(raw: bigint, decimals: number): { amount: string; usd: number } {
-  // USDT is dollar-pegged, so raw / 10^decimals ≈ USD
   const divisor = BigInt(10) ** BigInt(decimals);
   const whole = raw / divisor;
   const frac = raw % divisor;
   const usd = Number(whole) + Number(frac) / Number(divisor);
   return {
-    amount: `${usd.toFixed(Math.min(decimals, 4))} USDT`,
+    amount: `${usd.toFixed(Math.min(decimals, 4))} USDC`,
     usd,
   };
 }
 
-/* ── Verification ── */
-
-/**
- * Verify a transaction is a valid USDT payment of at least MIN_PAYMENT_USD
- * to RECEIVER_WALLET on the specified chain.
- */
 export async function verifyPayment(
   txHash: string,
   chainId: number,
 ): Promise<PaymentVerificationResult> {
-  // Sanitize inputs
   if (!/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
     return { verified: false, reason: "Invalid transaction hash format" };
   }
@@ -191,7 +159,6 @@ export async function verifyPayment(
     };
   }
 
-  // Fetch the receipt
   const receipt = await rpcCall<{
     status: string;
     logs: Array<{ address: string; topics: string[]; data: string }>;
@@ -200,7 +167,7 @@ export async function verifyPayment(
   if (!receipt) {
     return {
       verified: false,
-      reason: "Transaction not found. Wait for confirmation and try again.",
+      reason: "Transaction not found. Wait a moment and retry.",
       chainId,
       chainName: chain.name,
       txHash,
@@ -217,13 +184,11 @@ export async function verifyPayment(
     };
   }
 
-  // Find a Transfer event from the USDT contract to RECEIVER_WALLET
   const receiverTopic = padAddress(RECEIVER_WALLET);
 
   const transferLog = receipt.logs.find((log) => {
-    if (log.address.toLowerCase() !== chain.usdt) return false;
+    if (log.address.toLowerCase() !== chain.usdc) return false;
     if (log.topics[0] !== TRANSFER_TOPIC) return false;
-    // topics[2] is the `to` address
     if (log.topics[2]?.toLowerCase() !== receiverTopic) return false;
     return true;
   });
@@ -231,21 +196,20 @@ export async function verifyPayment(
   if (!transferLog) {
     return {
       verified: false,
-      reason: `No USDT transfer to ${RECEIVER_WALLET} found in transaction logs.`,
+      reason: `No USDC transfer to ${RECEIVER_WALLET} found in tx logs.`,
       chainId,
       chainName: chain.name,
       txHash,
     };
   }
 
-  // Parse amount (uint256 in data field)
-  const rawAmount = hexToBigInt(transferLog.data);
-  const { amount, usd } = formatAmount(rawAmount, chain.usdtDecimals);
+  const rawAmount = BigInt(transferLog.data);
+  const { amount, usd } = formatAmount(rawAmount, chain.usdcDecimals);
 
   if (usd < MIN_PAYMENT_USD) {
     return {
       verified: false,
-      reason: `Amount ${amount} below minimum ${MIN_PAYMENT_USD} USDT.`,
+      reason: `Amount ${amount} below minimum ${MIN_PAYMENT_USD} USDC.`,
       chainId,
       chainName: chain.name,
       txHash,

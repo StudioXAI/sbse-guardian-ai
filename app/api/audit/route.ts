@@ -399,20 +399,40 @@ export async function POST(req: Request) {
         findings.push(finding(`Liquidity DEX: ${liquidityInfo.dex}`, "info"));
       }
       if (liquidityInfo.liquidity) {
-        // Tone the severity based on actual USD liquidity
         const sev: "good" | "info" | "warn" =
           liquidityInfo.liquidityUsd && liquidityInfo.liquidityUsd >= 100_000
             ? "good"
             : liquidityInfo.liquidityUsd && liquidityInfo.liquidityUsd >= 10_000
             ? "info"
             : "warn";
-        findings.push(finding(`Liquidity: ${liquidityInfo.liquidity}`, sev));
+        findings.push(finding(`Top pair liquidity: ${liquidityInfo.liquidity}`, sev));
+      }
+      // Total across all pairs — useful signal for overall tradeability
+      if (liquidityInfo.totalLiquidityFormatted && liquidityInfo.pairCount && liquidityInfo.pairCount > 1) {
+        findings.push(finding(
+          `Total liquidity: ${liquidityInfo.totalLiquidityFormatted}`,
+          "info",
+          `Aggregated across ${liquidityInfo.pairCount} indexed pairs`,
+        ));
       }
       if (liquidityInfo.volume24h) {
         findings.push(finding(`24h Volume: ${liquidityInfo.volume24h}`, "info"));
       }
+      if (liquidityInfo.source) {
+        findings.push(finding(
+          `Liquidity source: ${
+            liquidityInfo.source === "dexscreener"
+              ? "DexScreener"
+              : liquidityInfo.source === "geckoterminal"
+              ? "GeckoTerminal"
+              : liquidityInfo.source === "source-code"
+              ? "On-chain contract detection"
+              : "Verified"
+          }`,
+          "info",
+        ));
+      }
     } else if (liquidityInfo.dataAvailable) {
-      // We checked and there really is no tradeable liquidity
       findings.push(finding(
         "No tradeable liquidity on indexed DEXes",
         "bad",
@@ -421,11 +441,10 @@ export async function POST(req: Request) {
       topConcerns.push("no tradeable liquidity");
       riskScore += 3;
     } else {
-      // Data genuinely unavailable — emit neutral info, don't penalize
       findings.push(finding(
         "Liquidity data unavailable",
         "info",
-        liquidityInfo.message || "DexScreener has not yet indexed this token",
+        liquidityInfo.message || "Not yet indexed by DexScreener or GeckoTerminal",
       ));
     }
 

@@ -3,11 +3,12 @@
 import type { AuditReport, Finding } from "@/lib/types";
 
 /**
- * Redesigned risk composition donut.
- * - Segments animate in with stroke-dashoffset transition (draw-on effect)
- * - Center "total" is gradient-stroked for depth
- * - Legend has mini progress fills for each severity tier
- * - Full new color palette (indigo accent, neon success, amber warning)
+ * Risk Composition donut — Batch 4 polish:
+ * - Much stronger text contrast on center label (was hard to read)
+ * - Bigger "TOTAL" typography
+ * - Brighter segment colors
+ * - Animated segment fade-in + rotation
+ * - Percentage label on the dominant segment
  */
 export default function RiskDonut({ report }: { report: AuditReport }) {
   const bad = report.findings.filter((f) => f.severity === "bad").length;
@@ -25,40 +26,16 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
   };
 
   const allSegments: Segment[] = [
-    {
-      id: "bad",
-      label: "Critical",
-      value: bad,
-      color: "#f87171",
-      glow: "rgba(248,113,113,0.45)",
-    },
-    {
-      id: "warn",
-      label: "Warnings",
-      value: warn,
-      color: "#facc15",
-      glow: "rgba(250,204,21,0.35)",
-    },
-    {
-      id: "info",
-      label: "Info",
-      value: info,
-      color: "#60a5fa",
-      glow: "rgba(96,165,250,0.35)",
-    },
-    {
-      id: "good",
-      label: "Clean",
-      value: good,
-      color: "#4ade80",
-      glow: "rgba(74,222,128,0.35)",
-    },
+    { id: "bad",  label: "Critical", value: bad,  color: "#f87171", glow: "rgba(248,113,113,0.45)" },
+    { id: "warn", label: "Warnings", value: warn, color: "#facc15", glow: "rgba(250,204,21,0.35)" },
+    { id: "info", label: "Info",     value: info, color: "#60a5fa", glow: "rgba(96,165,250,0.35)" },
+    { id: "good", label: "Clean",    value: good, color: "#4ade80", glow: "rgba(74,222,128,0.35)" },
   ];
 
   const segments = allSegments.filter((s) => s.value > 0);
 
-  const size = 260;
-  const strokeWidth = 26;
+  const size = 280;
+  const strokeWidth = 28;
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   const cx = size / 2;
@@ -71,17 +48,13 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
     const gap = circumference - length;
     const rotation = (accumulated / total) * 360 - 90;
     accumulated += seg.value;
-    return {
-      ...seg,
-      length,
-      gap,
-      rotation,
-      delay: i * 0.15,
-    };
+    return { ...seg, length, gap, rotation, delay: i * 0.15, pct };
   });
 
-  // Dominant finding type for headline tone
-  const dominant = segments.reduce((max, s) => (s.value > max.value ? s : max), segments[0] || allSegments[3]);
+  const dominant = segments.reduce(
+    (max, s) => (s.value > max.value ? s : max),
+    segments[0] || allSegments[3],
+  );
 
   return (
     <section
@@ -89,30 +62,40 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
       style={{ padding: "28px 32px" }}
       aria-labelledby="donut-title"
     >
-      {/* Ambient radial glow */}
+      {/* Ambient radial glow tuned to dominant finding */}
       <div
         aria-hidden
         className="absolute inset-0 pointer-events-none"
         style={{
-          background: `radial-gradient(circle at 50% 45%, ${dominant?.glow ?? "rgba(108,99,255,0.1)"}, transparent 55%)`,
-          opacity: 0.6,
+          background: `radial-gradient(circle at 50% 45%, ${
+            dominant?.glow ?? "rgba(108,99,255,0.1)"
+          }, transparent 55%)`,
+          opacity: 0.5,
         }}
       />
 
       {/* Header */}
       <div className="relative flex items-baseline justify-between gap-4 mb-7">
-        <h3 id="donut-title" className="text-xl font-semibold tracking-tight" style={{ color: "var(--fg)", letterSpacing: "-0.02em" }}>
+        <h3
+          id="donut-title"
+          className="text-xl font-semibold tracking-tight"
+          style={{ color: "var(--fg)", letterSpacing: "-0.02em" }}
+        >
           Risk Composition
         </h3>
-        <span className="label-xs">{total} findings</span>
+        <span className="label-xs" style={{ color: "var(--fg-muted)" }}>
+          {total} findings
+        </span>
       </div>
 
-      <div className="relative flex flex-col items-center gap-8">
+      <div className="relative flex flex-col items-center gap-7">
         {/* Donut */}
         <div
           className="relative"
           role="img"
-          aria-label={`Risk composition: ${segments.map((s) => `${s.label} ${s.value}`).join(", ")}`}
+          aria-label={`Risk composition: ${segments
+            .map((s) => `${s.label} ${s.value}`)
+            .join(", ")}`}
         >
           <svg
             width={size}
@@ -126,28 +109,33 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
               cy={cy}
               r={radius}
               fill="none"
-              stroke="var(--border)"
+              stroke="rgba(255,255,255,0.08)"
               strokeWidth={strokeWidth}
-              opacity={0.6}
             />
 
             {/* Animated segments */}
             {arcs.map((arc) => (
-              <g key={arc.id} transform={`rotate(${arc.rotation} ${cx} ${cy})`}>
-                {/* Soft outer glow */}
+              <g
+                key={arc.id}
+                transform={`rotate(${arc.rotation} ${cx} ${cy})`}
+                style={{
+                  animation: `drawSegment 0.9s var(--ease) ${arc.delay}s both`,
+                }}
+              >
+                {/* Soft blurred glow underneath */}
                 <circle
                   cx={cx}
                   cy={cy}
                   r={radius}
                   fill="none"
                   stroke={arc.color}
-                  strokeWidth={strokeWidth + 6}
+                  strokeWidth={strokeWidth + 8}
                   strokeDasharray={`${arc.length} ${arc.gap}`}
                   strokeLinecap="butt"
-                  opacity={0.18}
-                  style={{ filter: `blur(6px)` }}
+                  opacity={0.22}
+                  style={{ filter: "blur(6px)" }}
                 />
-                {/* Actual segment */}
+                {/* Segment */}
                 <circle
                   cx={cx}
                   cy={cy}
@@ -157,26 +145,22 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
                   strokeWidth={strokeWidth}
                   strokeDasharray={`${arc.length} ${arc.gap}`}
                   strokeLinecap="butt"
-                  style={{
-                    strokeDashoffset: 0,
-                    animation: `drawSegment 1s var(--ease) ${arc.delay}s both`,
-                    transformOrigin: `${cx}px ${cy}px`,
-                  }}
                 >
-                  <title>{`${arc.label}: ${arc.value}`}</title>
+                  <title>{`${arc.label}: ${arc.value} (${(arc.pct * 100).toFixed(0)}%)`}</title>
                 </circle>
               </g>
             ))}
 
-            {/* Center labels */}
+            {/* Center labels — HIGH CONTRAST for visibility */}
             <text
               x={cx}
-              y={cy - 12}
+              y={cy - 22}
               textAnchor="middle"
-              fill="var(--fg-dim)"
+              fill="rgba(237,237,237,0.6)"
               fontSize="10"
               fontFamily="var(--font-mono)"
-              letterSpacing="0.25em"
+              letterSpacing="0.3em"
+              style={{ textTransform: "uppercase" }}
             >
               TOTAL
             </text>
@@ -184,8 +168,8 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
               x={cx}
               y={cy + 18}
               textAnchor="middle"
-              fill="var(--fg)"
-              fontSize="42"
+              fill="#ffffff"
+              fontSize="56"
               fontWeight="700"
               fontFamily="var(--font-sans)"
               style={{ letterSpacing: "-0.04em" }}
@@ -194,15 +178,18 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
             </text>
             <text
               x={cx}
-              y={cy + 38}
+              y={cy + 40}
               textAnchor="middle"
-              fill={dominant?.color ?? "var(--fg-dim)"}
-              fontSize="10"
+              fill={dominant?.color ?? "var(--fg-muted)"}
+              fontSize="11"
               fontFamily="var(--font-mono)"
-              letterSpacing="0.2em"
+              letterSpacing="0.25em"
+              fontWeight="500"
               style={{ textTransform: "uppercase" }}
             >
-              {dominant?.label ?? "—"}
+              {segments.length
+                ? `${dominant.label} · ${Math.round((dominant.value / total) * 100)}%`
+                : "—"}
             </text>
           </svg>
         </div>
@@ -216,13 +203,13 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
               <li
                 key={seg.id}
                 className="relative flex items-center gap-3 py-2"
-                style={{ opacity: active ? 1 : 0.3 }}
+                style={{ opacity: active ? 1 : 0.35 }}
               >
                 <span
-                  className="inline-block h-2 w-2 rounded-full shrink-0"
+                  className="inline-block h-2.5 w-2.5 rounded-full shrink-0"
                   style={{
                     background: seg.color,
-                    boxShadow: active ? `0 0 6px ${seg.glow}` : "none",
+                    boxShadow: active ? `0 0 8px ${seg.glow}` : "none",
                   }}
                 />
                 <span
@@ -231,20 +218,16 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
                 >
                   {seg.label}
                 </span>
-                {/* Percent bar */}
                 <div
                   className="hidden sm:block relative h-1 rounded-full overflow-hidden shrink-0"
-                  style={{
-                    width: "90px",
-                    background: "var(--border)",
-                  }}
+                  style={{ width: "90px", background: "var(--border)" }}
                 >
                   <div
                     className="absolute inset-y-0 left-0 rounded-full"
                     style={{
                       width: `${pct}%`,
                       background: seg.color,
-                      boxShadow: active ? `0 0 4px ${seg.glow}` : "none",
+                      boxShadow: active ? `0 0 6px ${seg.glow}` : "none",
                       transition: "width 0.9s var(--ease) 0.3s",
                     }}
                   />
@@ -269,7 +252,8 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
         @keyframes drawSegment {
           from {
             opacity: 0;
-            transform: scale(0.96);
+            transform: scale(0.92);
+            transform-origin: center;
           }
           to {
             opacity: 1;

@@ -1,216 +1,192 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
+import {
+  useAppKit,
+  useAppKitAccount,
+  useAppKitNetwork,
+  useAppKitProvider,
+  useDisconnect,
+} from "@reown/appkit/react";
 import type { AuditReport } from "@/lib/types";
 
 /* ─────────────────────────────────────────────────────────────
-   Premium Unlock Card
-   Wallet-connect + pay $0.20 USDT flow.
-
-   Uses window.ethereum (any injected EVM wallet: MetaMask, Rabby,
-   Rainbow, Brave, Coinbase, etc.) — no wagmi/RainbowKit dependency.
+   Premium Unlock — USDC $2 on any of 6 chains
+   Uses Reown AppKit (WalletConnect v2) for QR + injected wallet flow.
 
    Flow:
-   1. User clicks "Connect wallet"
-   2. We ensure wallet is on one of 6 supported chains; if not, offer
-      to switch.
-   3. User clicks "Pay $0.20 USDT"
-   4. We send ERC-20 transfer tx to receiver wallet
-   5. On confirmation, POST to /api/unlock for server-side verification
-   6. On success, show unlocked state
+   1. Open Reown modal (QR code or injected wallet picker)
+   2. Check user's USDC balance on the currently selected chain
+   3. If insufficient, tell them clearly (don't even attempt the tx)
+   4. Send USDC.transfer(RECEIVER, 2 USDC)
+   5. Wait for receipt, then POST /api/unlock for server verification
    ───────────────────────────────────────────────────────────── */
 
-/** Supported payment chains. Must match /lib/verifyPayment.ts. */
-const PAYMENT_CHAINS = [
-  { id: 1, name: "Ethereum", usdt: "0xdac17f958d2ee523a2206206994597c13d831ec7", decimals: 6 },
-  { id: 56, name: "BNB Smart Chain", usdt: "0x55d398326f99059ff775485246999027b3197955", decimals: 18 },
-  { id: 137, name: "Polygon", usdt: "0xc2132d05d31c914a87c6611c10748aeb04b58e8f", decimals: 6 },
-  { id: 8453, name: "Base", usdt: "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2", decimals: 6 },
-  { id: 42161, name: "Arbitrum", usdt: "0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9", decimals: 6 },
-  { id: 10, name: "Optimism", usdt: "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58", decimals: 6 },
+/** USDC contracts (verified from Circle docs). All 6 decimals. */
+const CHAINS = [
+  { id: 1,     key: "ethereum", name: "Ethereum",   usdc: "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48", decimals: 6 },
+  { id: 56,    key: "bsc",      name: "BSC",        usdc: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 }, // Binance-Peg USDC on BSC is 18-decimal
+  { id: 137,   key: "polygon",  name: "Polygon",    usdc: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 }, // native USDC
+  { id: 8453,  key: "base",     name: "Base",       usdc: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 }, // Circle native USDC
+  { id: 42161, key: "arbitrum", name: "Arbitrum",   usdc: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 }, // native USDC
+  { id: 10,    key: "optimism", name: "Optimism",   usdc: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", decimals: 6 }, // native USDC
 ];
 
 const RECEIVER = "0x088f13E8813913aAf20b7c680e40439fF8Df445D";
-const AMOUNT_USDT_FLOAT = 0.2;
+const PRICE_USDC = 2;
 
-/** ERC-20 transfer(address,uint256) function selector */
-const TRANSFER_SELECTOR = "0xa9059cbb";
+// ERC20 minimal ABI
+const ERC20_ABI = [
+  "function balanceOf(address owner) view returns (uint256)",
+  "function transfer(address to, uint256 amount) returns (bool)",
+  "function decimals() view returns (uint8)",
+];
 
 type Status =
   | "idle"
-  | "connecting"
-  | "connected"
-  | "switching"
+  | "checking_balance"
   | "sending"
   | "confirming"
   | "verifying"
   | "unlocked"
   | "error";
 
-type EthereumProvider = {
-  request: (args: { method: string; params?: unknown[] }) => Promise<unknown>;
-  on?: (event: string, listener: (...args: unknown[]) => void) => void;
-  removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
-};
+export default function PremiumUnlock({ report }: { report: AuditReport }) {
+  const { open } = useAppKit();
+  const { address, isConnected } = useAppKitAccount();
+  const { chainId, switchNetwork } = useAppKitNetwork();
+  const { walletProvider } = useAppKitProvider<any>("eip155");
+  const { disconnect } = useDisconnect();
 
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider;
-  }
-}
-
-export default function PremiumUnlock({
-  report,
-  onUnlocked,
-}: {
-  report: AuditReport;
-  onUnlocked?: () => void;
-}) {
   const [status, setStatus] = useState<Status>("idle");
-  const [wallet, setWallet] = useState<string | null>(null);
-  const [chainId, setChainId] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [txHash, setTxHash] = useState<string | null>(null);
+  const [balance, setBalance] = useState<string | null>(null);
+  const [hasEnough, setHasEnough] = useState<boolean | null>(null);
 
-  /** Does the browser have a wallet injected? */
-  const hasWallet = typeof window !== "undefined" && !!window.ethereum;
-
-  const currentChain = PAYMENT_CHAINS.find((c) => c.id === chainId);
+  const currentChain = CHAINS.find((c) => c.id === Number(chainId));
   const chainSupported = !!currentChain;
 
-  /* ── Wallet connect ── */
-  const connect = useCallback(async () => {
-    if (!window.ethereum) {
-      setError("No EVM wallet detected. Install MetaMask, Rabby, or Rainbow.");
+  /* ─── Check USDC balance on chain change ─── */
+  useEffect(() => {
+    let cancelled = false;
+    async function checkBalance() {
+      if (!isConnected || !address || !walletProvider || !currentChain) {
+        setBalance(null);
+        setHasEnough(null);
+        return;
+      }
+      try {
+        setStatus("checking_balance");
+        const provider = new BrowserProvider(walletProvider);
+        const usdc = new Contract(currentChain.usdc, ERC20_ABI, provider);
+        const raw = (await usdc.balanceOf(address)) as bigint;
+        if (cancelled) return;
+
+        const formatted = formatUnits(raw, currentChain.decimals);
+        setBalance(formatted);
+
+        const needed = parseUnits(String(PRICE_USDC), currentChain.decimals);
+        setHasEnough(raw >= needed);
+        setStatus("idle");
+      } catch (e) {
+        if (cancelled) return;
+        console.warn("Balance check failed:", e);
+        setBalance(null);
+        setHasEnough(null);
+        setStatus("idle");
+      }
+    }
+    void checkBalance();
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, address, walletProvider, chainId, currentChain]);
+
+  /* ─── Pay action ─── */
+  const pay = useCallback(async () => {
+    if (!walletProvider || !address || !currentChain) {
+      setError("Wallet not ready");
       setStatus("error");
       return;
     }
-    setStatus("connecting");
-    setError(null);
-    try {
-      const accounts = (await window.ethereum.request({
-        method: "eth_requestAccounts",
-      })) as string[];
-      if (!accounts?.length) throw new Error("No account returned");
-      setWallet(accounts[0]);
-
-      const cid = (await window.ethereum.request({ method: "eth_chainId" })) as string;
-      setChainId(parseInt(cid, 16));
-
-      setStatus("connected");
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Connection failed";
-      setError(msg);
+    if (!hasEnough) {
+      setError(`You need at least ${PRICE_USDC} USDC on ${currentChain.name}`);
       setStatus("error");
+      return;
     }
-  }, []);
 
-  /* ── Listen for account / chain changes ── */
-  useEffect(() => {
-    if (!window.ethereum?.on) return;
-    const onAccounts = (...args: unknown[]) => {
-      const accounts = args[0] as string[];
-      setWallet(accounts?.[0] || null);
-      if (!accounts?.length) setStatus("idle");
-    };
-    const onChain = (...args: unknown[]) => {
-      const hex = args[0] as string;
-      setChainId(parseInt(hex, 16));
-    };
-    window.ethereum.on("accountsChanged", onAccounts);
-    window.ethereum.on("chainChanged", onChain);
-    return () => {
-      window.ethereum?.removeListener?.("accountsChanged", onAccounts);
-      window.ethereum?.removeListener?.("chainChanged", onChain);
-    };
-  }, []);
-
-  /* ── Switch chain ── */
-  const switchTo = useCallback(async (targetId: number) => {
-    if (!window.ethereum) return;
-    setStatus("switching");
     setError(null);
-    try {
-      await window.ethereum.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: "0x" + targetId.toString(16) }],
-      });
-      setChainId(targetId);
-      setStatus("connected");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Chain switch rejected");
-      setStatus("error");
-    }
-  }, []);
-
-  /* ── Pay ── */
-  const pay = useCallback(async () => {
-    if (!window.ethereum || !wallet || !currentChain) return;
     setStatus("sending");
-    setError(null);
-    setTxHash(null);
 
     try {
-      // Compute raw amount
-      const multiplier = BigInt(10) ** BigInt(currentChain.decimals);
-      const whole = BigInt(Math.floor(AMOUNT_USDT_FLOAT));
-      const frac = BigInt(Math.round((AMOUNT_USDT_FLOAT - Math.floor(AMOUNT_USDT_FLOAT)) * Number(multiplier)));
-      const raw = whole * multiplier + frac;
+      const provider = new BrowserProvider(walletProvider);
+      const signer = await provider.getSigner();
+      const usdc = new Contract(currentChain.usdc, ERC20_ABI, signer);
+      const amount = parseUnits(String(PRICE_USDC), currentChain.decimals);
 
-      // Encode transfer(to, amount)
-      const toPadded = RECEIVER.toLowerCase().replace(/^0x/, "").padStart(64, "0");
-      const amountPadded = raw.toString(16).padStart(64, "0");
-      const data = TRANSFER_SELECTOR + toPadded + amountPadded;
-
-      const hash = (await window.ethereum.request({
-        method: "eth_sendTransaction",
-        params: [
-          {
-            from: wallet,
-            to: currentChain.usdt,
-            data,
-            value: "0x0",
-          },
-        ],
-      })) as string;
-
-      setTxHash(hash);
+      // Send the tx
+      const tx = await usdc.transfer(RECEIVER, amount);
+      setTxHash(tx.hash);
       setStatus("confirming");
 
-      // Poll for confirmation
-      const receipt = await waitForReceipt(hash);
-      if (!receipt || receipt.status !== "0x1") {
-        throw new Error("Transaction failed on-chain");
+      // Wait 1 confirmation
+      const receipt = await tx.wait(1);
+      if (!receipt || receipt.status !== 1) {
+        throw new Error("Transaction reverted on-chain");
       }
 
-      // Server-side verify
+      // Verify server-side
       setStatus("verifying");
       const res = await fetch("/api/unlock", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          txHash: hash,
+          txHash: tx.hash,
           chainId: currentChain.id,
           contractAddress: report.contractAddress,
         }),
       });
       const json = await res.json();
-      if (!json.success) throw new Error(json.message || "Verification failed");
+      if (!json.success) {
+        throw new Error(json.message || "Server verification failed");
+      }
 
       setStatus("unlocked");
-      onUnlocked?.();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Payment failed";
+    } catch (e: any) {
+      console.error("Payment failed:", e);
+      let msg = "Payment failed";
+      if (e?.code === "ACTION_REJECTED" || e?.code === 4001) {
+        msg = "Transaction rejected in wallet";
+      } else if (e?.message?.includes("insufficient funds")) {
+        msg = `Not enough ${currentChain.key === "ethereum" ? "ETH" : "native gas token"} to pay gas fees`;
+      } else if (e?.message) {
+        msg = e.message.slice(0, 200);
+      }
       setError(msg);
       setStatus("error");
     }
-  }, [wallet, currentChain, report.contractAddress, onUnlocked]);
+  }, [walletProvider, address, currentChain, hasEnough, report.contractAddress]);
 
-  /* ─────────────────────────────────────────────────────────────
-     Render
-     ───────────────────────────────────────────────────────────── */
+  /* ─── Render ─── */
 
-  const shortWallet = wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : "";
+  const shortAddr = address
+    ? `${address.slice(0, 6)}…${address.slice(-4)}`
+    : "";
+
+  const payButtonLabel = () => {
+    switch (status) {
+      case "sending":
+        return "Confirm in wallet…";
+      case "confirming":
+        return "Waiting for block…";
+      case "verifying":
+        return "Verifying on-chain…";
+      default:
+        return `Pay ${PRICE_USDC} USDC`;
+    }
+  };
 
   return (
     <section
@@ -227,8 +203,7 @@ export default function PremiumUnlock({
         <div
           className="h-10 w-10 rounded-xl grid place-items-center font-semibold text-lg"
           style={{
-            background:
-              "linear-gradient(135deg, var(--accent), var(--accent-soft))",
+            background: "linear-gradient(135deg, var(--accent), var(--accent-soft))",
             color: "#fff",
             boxShadow: "0 0 20px rgba(108,99,255,0.4)",
           }}
@@ -238,6 +213,15 @@ export default function PremiumUnlock({
         <span className="label-sm" style={{ color: "var(--accent-soft)" }}>
           Premium Analysis
         </span>
+        {isConnected && (
+          <button
+            onClick={() => disconnect()}
+            className="ml-auto font-mono text-xs hover:underline"
+            style={{ color: "var(--fg-dim)" }}
+          >
+            Disconnect
+          </button>
+        )}
       </div>
 
       {/* Title */}
@@ -257,11 +241,11 @@ export default function PremiumUnlock({
         style={{ fontSize: "15px", color: "var(--fg-muted)", lineHeight: 1.6 }}
       >
         Mint a permanent on-chain audit proof, get the expanded AI walkthrough,
-        watchlist this contract for ownership transfers and liquidity events,
-        and download the full PDF report.
+        watchlist this contract for ownership and liquidity events, and download
+        the full PDF report.
       </p>
 
-      {/* Price + chains */}
+      {/* Price + chain chips */}
       <div
         className="flex items-center gap-5 pt-4 mb-6 flex-wrap"
         style={{ borderTop: "1px solid var(--border)" }}
@@ -275,23 +259,20 @@ export default function PremiumUnlock({
               letterSpacing: "-0.03em",
             }}
           >
-            $0.20
+            ${PRICE_USDC}
           </span>
           <span
             className="font-mono text-xs"
             style={{ color: "var(--fg-muted)", letterSpacing: "0.1em" }}
           >
-            USDT
+            USDC
           </span>
         </div>
-        <span
-          className="label-xs"
-          style={{ color: "var(--fg-dim)" }}
-        >
-          Pay on any of 6 chains
+        <span className="label-xs" style={{ color: "var(--fg-dim)" }}>
+          Pay on any chain
         </span>
         <div className="flex flex-wrap gap-1.5 ml-auto">
-          {PAYMENT_CHAINS.map((c) => (
+          {CHAINS.map((c) => (
             <span
               key={c.id}
               className="font-mono text-[10px] tracking-wider uppercase px-2 py-1 rounded-md"
@@ -299,87 +280,48 @@ export default function PremiumUnlock({
                 borderWidth: 1,
                 borderStyle: "solid",
                 borderColor:
-                  chainId === c.id ? "var(--accent)" : "var(--border)",
+                  Number(chainId) === c.id ? "var(--accent)" : "var(--border)",
                 color:
-                  chainId === c.id ? "var(--accent-soft)" : "var(--fg-dim)",
+                  Number(chainId) === c.id ? "var(--accent-soft)" : "var(--fg-dim)",
                 background:
-                  chainId === c.id ? "var(--accent-dim)" : "transparent",
+                  Number(chainId) === c.id ? "var(--accent-dim)" : "transparent",
               }}
             >
-              {c.name.split(" ")[0]}
+              {c.name}
             </span>
           ))}
         </div>
       </div>
 
-      {/* Flow states */}
-      {!hasWallet ? (
-        <div
-          className="p-4 rounded-lg text-sm"
+      {/* Flow */}
+      {status === "unlocked" ? (
+        <UnlockedState chainId={chainId as number | undefined} txHash={txHash} />
+      ) : !isConnected ? (
+        <button
+          type="button"
+          onClick={() => open()}
+          className="px-6 py-3 rounded-lg font-medium text-sm transition-all hover:brightness-110"
           style={{
-            background: "var(--warning-dim)",
-            border: "1px solid rgba(250,204,21,0.25)",
-            color: "var(--warning)",
+            background: "var(--accent)",
+            color: "#fff",
+            boxShadow: "0 0 20px rgba(108,99,255,0.35)",
           }}
         >
-          No wallet detected. Install{" "}
-          <a href="https://metamask.io" target="_blank" rel="noopener noreferrer" className="underline">MetaMask</a>,{" "}
-          <a href="https://rabby.io" target="_blank" rel="noopener noreferrer" className="underline">Rabby</a>, or{" "}
-          <a href="https://rainbow.me" target="_blank" rel="noopener noreferrer" className="underline">Rainbow</a>{" "}
-          to continue.
-        </div>
-      ) : status === "unlocked" ? (
-        <div
-          className="p-5 rounded-lg"
-          style={{
-            background: "var(--success-dim)",
-            border: "1px solid rgba(74,222,128,0.3)",
-          }}
-        >
-          <div
-            className="flex items-center gap-2 mb-2"
-            style={{ color: "var(--success)" }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M20 6L9 17L4 12" />
-            </svg>
-            <span className="font-semibold text-sm">Payment verified</span>
-          </div>
-          <p className="text-sm" style={{ color: "var(--fg-muted)" }}>
-            Premium features unlocked for this contract.{" "}
-            {txHash && (
-              <a
-                href={`${explorerTxUrl(chainId!, txHash)}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono hover:underline"
-                style={{ color: "var(--accent-soft)" }}
-              >
-                View tx →
-              </a>
-            )}
-          </p>
-        </div>
-      ) : !wallet ? (
-        <ActionButton
-          label={status === "connecting" ? "Connecting…" : "Connect wallet"}
-          onClick={connect}
-          loading={status === "connecting"}
-        />
+          Connect wallet →
+        </button>
       ) : !chainSupported ? (
         <div>
           <p className="text-sm mb-3" style={{ color: "var(--fg-muted)" }}>
-            Connected as <span className="font-mono">{shortWallet}</span> on
+            Connected as <span className="font-mono">{shortAddr}</span> on
             unsupported chain. Switch to:
           </p>
           <div className="flex flex-wrap gap-2">
-            {PAYMENT_CHAINS.map((c) => (
+            {CHAINS.map((c) => (
               <button
                 key={c.id}
                 type="button"
-                onClick={() => switchTo(c.id)}
-                disabled={status === "switching"}
-                className="px-3 py-2 rounded-lg font-mono text-xs transition-all hover:brightness-110 disabled:opacity-50"
+                onClick={() => switchNetwork({ id: c.id } as any)}
+                className="px-3 py-2 rounded-lg font-mono text-xs transition-all hover:brightness-110"
                 style={{
                   background: "var(--bg-elevated)",
                   color: "var(--fg-muted)",
@@ -395,18 +337,74 @@ export default function PremiumUnlock({
         </div>
       ) : (
         <div>
-          <p className="text-sm mb-3" style={{ color: "var(--fg-muted)" }}>
-            <span className="font-mono" style={{ color: "var(--fg)" }}>
-              {shortWallet}
-            </span>{" "}
-            on <strong>{currentChain?.name}</strong>
-          </p>
-          <ActionButton
-            label={payButtonLabel(status)}
-            onClick={pay}
-            loading={["sending", "confirming", "verifying"].includes(status)}
-            disabled={["sending", "confirming", "verifying"].includes(status)}
-          />
+          <div className="flex items-center gap-3 mb-4 flex-wrap">
+            <span
+              className="font-mono text-xs px-3 py-1.5 rounded-md"
+              style={{
+                background: "var(--bg-elevated)",
+                borderWidth: 1,
+                borderStyle: "solid",
+                borderColor: "var(--border)",
+                color: "var(--fg)",
+              }}
+            >
+              {shortAddr} · {currentChain.name}
+            </span>
+            {balance !== null && (
+              <span
+                className="font-mono text-xs"
+                style={{
+                  color: hasEnough ? "var(--success)" : "var(--warning)",
+                }}
+              >
+                Balance: {Number(balance).toFixed(2)} USDC
+                {!hasEnough && ` · need ${PRICE_USDC}`}
+              </span>
+            )}
+          </div>
+
+          {hasEnough === false ? (
+            <div
+              className="p-4 rounded-lg"
+              style={{
+                background: "var(--warning-dim)",
+                border: "1px solid rgba(250,204,21,0.25)",
+                color: "var(--warning)",
+              }}
+            >
+              <p className="text-sm mb-2 font-medium">
+                Insufficient USDC on {currentChain.name}
+              </p>
+              <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
+                You have {Number(balance || 0).toFixed(4)} USDC but need{" "}
+                {PRICE_USDC}. Bridge USDC or switch to a chain where you have
+                enough.
+              </p>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={pay}
+              disabled={["sending", "confirming", "verifying", "checking_balance"].includes(status) || hasEnough === null}
+              className="px-6 py-3 rounded-lg font-medium text-sm transition-all hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
+              style={{
+                background: "var(--accent)",
+                color: "#fff",
+                boxShadow: "0 0 20px rgba(108,99,255,0.35)",
+              }}
+            >
+              {["sending", "confirming", "verifying"].includes(status) && (
+                <span
+                  className="inline-block h-3 w-3 rounded-full mr-2 align-middle"
+                  style={{
+                    background: "#fff",
+                    animation: "pulse 1s ease-in-out infinite",
+                  }}
+                />
+              )}
+              {payButtonLabel()} →
+            </button>
+          )}
         </div>
       )}
 
@@ -435,64 +433,62 @@ export default function PremiumUnlock({
       >
         Payment goes directly to the SbSe Guardian receiver wallet on-chain. No
         custody, no refunds. Unlock is tied to your wallet address and the
-        scanned contract.
+        scanned contract. WalletConnect v2 / 300+ wallets supported.
       </p>
     </section>
   );
 }
 
-/* ─────────────────────────────────────────────────────────────
-   Helpers
-   ───────────────────────────────────────────────────────────── */
-
-function ActionButton({
-  label,
-  onClick,
-  loading,
-  disabled,
+function UnlockedState({
+  chainId,
+  txHash,
 }: {
-  label: string;
-  onClick: () => void;
-  loading?: boolean;
-  disabled?: boolean;
+  chainId?: number;
+  txHash: string | null;
 }) {
+  const txUrl = txHash && chainId ? explorerTxUrl(chainId, txHash) : "#";
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="px-6 py-3 rounded-lg font-medium text-sm transition-all hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
+    <div
+      className="p-5 rounded-lg"
       style={{
-        background: "var(--accent)",
-        color: "#fff",
-        boxShadow: "0 0 20px rgba(108,99,255,0.35)",
+        background: "var(--success-dim)",
+        border: "1px solid rgba(74,222,128,0.3)",
       }}
     >
-      {loading && (
-        <span
-          className="inline-block h-3 w-3 rounded-full mr-2 align-middle"
-          style={{
-            background: "#fff",
-            animation: "pulse 1s ease-in-out infinite",
-          }}
-        />
-      )}
-      {label} →
-    </button>
+      <div
+        className="flex items-center gap-2 mb-2"
+        style={{ color: "var(--success)" }}
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M20 6L9 17L4 12" />
+        </svg>
+        <span className="font-semibold text-sm">Payment verified</span>
+      </div>
+      <p className="text-sm" style={{ color: "var(--fg-muted)" }}>
+        Premium features unlocked for this contract.{" "}
+        {txHash && (
+          <a
+            href={txUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono hover:underline"
+            style={{ color: "var(--accent-soft)" }}
+          >
+            View tx →
+          </a>
+        )}
+      </p>
+    </div>
   );
-}
-
-function payButtonLabel(s: Status): string {
-  switch (s) {
-    case "sending":
-      return "Confirm in wallet…";
-    case "confirming":
-      return "Waiting for block…";
-    case "verifying":
-      return "Verifying on-chain…";
-    default:
-      return "Pay $0.20 USDT";
-  }
 }
 
 function explorerTxUrl(chainId: number, hash: string): string {
@@ -505,25 +501,4 @@ function explorerTxUrl(chainId: number, hash: string): string {
     10: `https://optimistic.etherscan.io/tx/${hash}`,
   };
   return map[chainId] || "#";
-}
-
-/** Poll for tx receipt via window.ethereum. Max 2 minutes. */
-async function waitForReceipt(
-  hash: string,
-  maxAttempts = 60,
-  intervalMs = 2000,
-): Promise<{ status: string } | null> {
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      const r = (await window.ethereum?.request({
-        method: "eth_getTransactionReceipt",
-        params: [hash],
-      })) as { status: string } | null;
-      if (r && r.status) return r;
-    } catch {
-      /* ignore */
-    }
-    await new Promise((res) => setTimeout(res, intervalMs));
-  }
-  return null;
 }

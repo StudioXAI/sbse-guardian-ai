@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { AuditReport, Finding } from "@/lib/types";
+import { socialIconForUrl } from "./SocialIcons";
 
 const SEVERITY_STYLES: Record<
   Finding["severity"],
@@ -100,6 +101,8 @@ export default function FindingsList({ report }: { report: AuditReport }) {
       <ul className="space-y-2" role="list">
         {visible.map((f, i) => {
           const s = SEVERITY_STYLES[f.severity];
+          const socialIcon = getSocialIconForFinding(f);
+
           return (
             <li
               key={`${f.label}-${i}`}
@@ -122,8 +125,16 @@ export default function FindingsList({ report }: { report: AuditReport }) {
                 {s.icon}
               </span>
               <div className="flex-1 min-w-0">
-                <div className="text-sm leading-snug" style={{ color: "var(--fg)" }}>
-                  {f.label}
+                <div
+                  className="text-sm leading-snug flex items-center gap-2 flex-wrap"
+                  style={{ color: "var(--fg)" }}
+                >
+                  {socialIcon && (
+                    <span style={{ color: s.color }} aria-hidden>
+                      {socialIcon}
+                    </span>
+                  )}
+                  <span>{f.label}</span>
                 </div>
                 {f.detail && (
                   <div
@@ -148,13 +159,33 @@ export default function FindingsList({ report }: { report: AuditReport }) {
 }
 
 /**
- * Render finding detail, linkifying URLs and addresses.
- * URLs become clickable links. Addresses get monospace styling.
+ * If this finding's label references a known social platform, return its icon.
+ * Matches against label text (e.g., "Twitter profile linked").
  */
+function getSocialIconForFinding(f: Finding): React.ReactNode | null {
+  const label = f.label.toLowerCase();
+  const detail = (f.detail || "").toLowerCase();
+
+  // Label-based detection
+  if (label.includes("twitter")) return socialIconForUrl("https://twitter.com", 14);
+  if (label.includes("telegram")) return socialIconForUrl("https://t.me", 14);
+  if (label.includes("discord")) return socialIconForUrl("https://discord.com", 14);
+  if (label.includes("github")) return socialIconForUrl("https://github.com", 14);
+  if (label.includes("medium")) return socialIconForUrl("https://medium.com", 14);
+  if (label.includes("reddit")) return socialIconForUrl("https://reddit.com", 14);
+  if (label.includes("website")) return socialIconForUrl("https://", 14);
+
+  // Detail-URL based detection as fallback
+  if (detail.startsWith("http") && URL_REGEX.test(detail.trim())) {
+    return socialIconForUrl(detail.trim(), 14);
+  }
+
+  return null;
+}
+
 function renderDetail(detail: string, accentColor: string): React.ReactNode {
   const trimmed = detail.trim();
 
-  // Single URL detail — render as a prominent link
   if (URL_REGEX.test(trimmed)) {
     return (
       <a
@@ -170,7 +201,6 @@ function renderDetail(detail: string, accentColor: string): React.ReactNode {
     );
   }
 
-  // Detail that contains a URL alongside text — linkify inline
   const urlMatch = trimmed.match(/(https?:\/\/[^\s<>]+)/);
   if (urlMatch) {
     const parts = trimmed.split(urlMatch[0]);
@@ -192,7 +222,6 @@ function renderDetail(detail: string, accentColor: string): React.ReactNode {
     );
   }
 
-  // Single address detail
   if (ADDRESS_REGEX.test(trimmed)) {
     return (
       <span className="font-mono" style={{ color: "var(--fg)" }}>
