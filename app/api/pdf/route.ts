@@ -86,10 +86,14 @@ export async function GET(req: NextRequest) {
     const unlockInfo = getUnlockInfo(wallet, contract);
 
     const origin = req.nextUrl.origin;
-    const auditRes = await fetch(
-      `${origin}/api/audit?address=${contract}&chainId=${chainIdStr}&includeWalkthrough=1`,
-      { method: "GET" },
-    );
+    const auditRes = await fetch(`${origin}/api/audit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contractAddress: contract,
+        includeWalkthrough: true,
+      }),
+    });
 
     if (!auditRes.ok) {
       return NextResponse.json({ error: "Could not fetch audit data" }, { status: 500 });

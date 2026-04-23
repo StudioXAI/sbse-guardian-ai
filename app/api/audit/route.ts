@@ -663,7 +663,7 @@ export async function POST(req: Request) {
     }
 
     /* ── Generate deep walkthrough if requested (premium PDF only) ── */
-    const includeWalkthrough = new URL(req.url).searchParams.get("includeWalkthrough") === "1";
+    const includeWalkthrough = body?.includeWalkthrough === true || body?.includeWalkthrough === "1";
     if (includeWalkthrough) {
       try {
         (report as any).deepWalkthrough = await generateDeepWalkthrough(report);
