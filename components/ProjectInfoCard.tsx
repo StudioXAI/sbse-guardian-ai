@@ -12,6 +12,18 @@ import {
   WebsiteIcon,
 } from "./SocialIcons";
 
+/* ─────────────────────────────────────────────────────────────
+   Project Info Card — Hotfix
+   The previous "fix" relied on iframe onLoad, which fires when
+   the HTML shell loads but BEFORE DexScreener's JS loads the pair.
+   So the timeout never fired because we thought we were loaded.
+
+   This version:
+   - Shows the iframe immediately (no skeleton gate)
+   - Shows a "Chart slow? Open directly ↗" link after 6 seconds
+   - Lets user always escape to DexScreener public URL
+   ───────────────────────────────────────────────────────────── */
+
 const CHAIN_SLUGS: Record<string, string> = {
   "ethereum": "ethereum",
   "bnb smart chain": "bsc",
@@ -34,20 +46,12 @@ function dexScreenerPublicUrl(chain: string, contract: string): string {
 }
 
 export default function ProjectInfoCard({ report }: { report: AuditReport }) {
-  const [chartLoaded, setChartLoaded] = useState(false);
-  const [chartFailed, setChartFailed] = useState(false);
+  const [showSlowHint, setShowSlowHint] = useState(false);
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      setChartFailed((prev) => prev || !chartLoaded);
-    }, 10_000);
+    const timer = setTimeout(() => setShowSlowHint(true), 6_000);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (chartLoaded && chartFailed) setChartFailed(false);
-  }, [chartLoaded, chartFailed]);
 
   const hasAnySocial =
     !!report.socials?.twitter ||
@@ -63,7 +67,11 @@ export default function ProjectInfoCard({ report }: { report: AuditReport }) {
   return (
     <section className="card p-7 anim-fade-up" aria-labelledby="project-info-title">
       <div className="flex items-baseline justify-between gap-4 mb-5 flex-wrap">
-        <h3 id="project-info-title" className="text-xl font-semibold tracking-tight" style={{ color: "var(--fg)", letterSpacing: "-0.02em" }}>
+        <h3
+          id="project-info-title"
+          className="text-xl font-semibold tracking-tight"
+          style={{ color: "var(--fg)", letterSpacing: "-0.02em" }}
+        >
           Project Info
         </h3>
         <span className="label-xs">Live · DexScreener</span>
@@ -71,41 +79,49 @@ export default function ProjectInfoCard({ report }: { report: AuditReport }) {
 
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         <div className="relative">
-          <div className="relative rounded-lg overflow-hidden border" style={{ borderColor: "var(--border)", background: "var(--bg-elevated)", minHeight: "340px" }}>
-            {!chartLoaded && !chartFailed && (
-              <div className="absolute inset-0 flex items-center justify-center text-sm skeleton" style={{ color: "var(--fg-dim)" }}>
-                Loading price chart…
-              </div>
-            )}
-            {!chartFailed && (
-              <iframe
-                src={embedUrl}
-                title={`${report.project} live price chart`}
-                style={{ width: "100%", height: "340px", border: "none", display: "block", opacity: chartLoaded ? 1 : 0, transition: "opacity 0.3s" }}
-                loading="lazy"
-                onLoad={() => setChartLoaded(true)}
-                onError={() => setChartFailed(true)}
-                sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-              />
-            )}
-            {chartFailed && (
-              <div className="flex flex-col items-center justify-center text-center px-6 py-10" style={{ minHeight: "340px", color: "var(--fg-muted)" }}>
-                <div className="mb-3 text-3xl" style={{ opacity: 0.4 }} aria-hidden>📊</div>
-                <p className="text-sm mb-2 font-medium" style={{ color: "var(--fg)" }}>Chart unavailable</p>
-                <p className="text-xs mb-4 max-w-sm" style={{ color: "var(--fg-dim)" }}>
-                  This token may not be indexed by DexScreener on this chain, or an ad-blocker is blocking the embed.
-                </p>
-                <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="text-xs hover:underline" style={{ color: "var(--accent-soft)" }}>
-                  Open on DexScreener ↗
-                </a>
-              </div>
-            )}
+          <div
+            className="relative rounded-lg overflow-hidden border"
+            style={{
+              borderColor: "var(--border)",
+              background: "var(--bg-elevated)",
+              minHeight: "340px",
+            }}
+          >
+            <iframe
+              src={embedUrl}
+              title={`${report.project} live price chart`}
+              style={{
+                width: "100%",
+                height: "340px",
+                border: "none",
+                display: "block",
+              }}
+              loading="lazy"
+              sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+            />
           </div>
-          {!chartFailed && (
-            <a href={publicUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-xs hover:underline" style={{ color: "var(--fg-dim)" }}>
+          <div className="mt-2 flex items-center gap-3 flex-wrap">
+            <a
+              href={publicUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 text-xs hover:underline"
+              style={{ color: "var(--fg-dim)" }}
+            >
               View on DexScreener ↗
             </a>
-          )}
+            {showSlowHint && (
+              <a
+                href={publicUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs hover:underline"
+                style={{ color: "var(--accent-soft)" }}
+              >
+                Chart slow? Open directly ↗
+              </a>
+            )}
+          </div>
         </div>
 
         <div className="space-y-4">
