@@ -22,6 +22,7 @@ import { checkLiquidityLock } from "@/lib/checkLiquidityLock";
 import { checkWalletTraps } from "@/lib/checkWalletTraps";
 import { predictRugPull } from "@/lib/predictRugPull";
 import { generateAiSummary } from "@/lib/aiSummary";
+import { analyzeBytecode, bytecodeToFindings } from "@/lib/bytecodeAnalyzer";
 
 import { honeypotCheck } from "@/lib/analyzers/honeypotCheck";
 import { ownerCheck } from "@/lib/analyzers/ownerCheck";
@@ -237,6 +238,7 @@ export async function POST(req: Request) {
           "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system.",
         scannedAt: new Date().toISOString(),
         aiSummary: null,
+        socials: {},
       };
       return NextResponse.json(report);
     }
@@ -342,11 +344,46 @@ export async function POST(req: Request) {
 
     if (!isStablecoin) {
       if (identity.website) {
-        findings.push(finding("Website Found", "good"));
+        findings.push(finding(
+          "Project website found",
+          "good",
+          identity.website,
+        ));
       } else {
-        findings.push(finding("No Website Detected", "warn"));
+        findings.push(finding(
+          "No project website detected",
+          "warn",
+          "DexScreener has no website on record for this token",
+        ));
         riskScore += 1;
       }
+    } else if (identity.website) {
+      findings.push(finding(
+        "Official website",
+        "good",
+        identity.website,
+      ));
+    }
+
+    // Social presence findings — each link individually surfaced
+    const socialList: Array<[string, string | undefined]> = [
+      ["Twitter", identity.socials.twitter],
+      ["Telegram", identity.socials.telegram],
+      ["Discord", identity.socials.discord],
+      ["GitHub", identity.socials.github],
+    ];
+    const foundSocials = socialList.filter(([, url]) => !!url);
+
+    if (foundSocials.length > 0) {
+      for (const [name, url] of foundSocials) {
+        findings.push(finding(`${name} profile linked`, "good", url));
+      }
+    } else if (!isStablecoin) {
+      findings.push(finding(
+        "No social profiles linked",
+        "warn",
+        "Twitter, Telegram, Discord, or GitHub not found on DexScreener",
+      ));
     }
 
     /* ── Liquidity layer ── */
@@ -395,62 +432,40 @@ export async function POST(req: Request) {
       riskScore += 2;
     }
 
-    /* ── Source-code pattern checks (word-boundary, lower false positives) ── */
-    if (sourceCode && !isStablecoin) {
-      if (sourceHas(sourceCode, "mint")) {
-        findings.push(finding("Mint function detected", "warn", "Deployer may be able to mint more supply"));
-        topConcerns.push("mint function");
-        riskScore += 2;
+    /* ── Bytecode-level analysis (authoritative, replaces keyword matching) ── */
+    const bytecodeAnalysis = await analyzeBytecode(contractAddress, rpcUrl);
+    const bytecodeFindings = bytecodeToFindings(bytecodeAnalysis);
+
+    // Only apply bytecode findings for non-institutional tokens
+    // (stablecoins / bluechips get their own clean verdict)
+    if (!isStablecoin) {
+      for (const f of bytecodeFindings) {
+        findings.push(finding(f.label, f.severity, f.detail));
+
+        // Adjust risk score based on severity of new findings
+        if (f.severity === "bad") riskScore += 3;
+        else if (f.severity === "warn") riskScore += 1;
       }
-      if (sourceHas(sourceCode, "blacklist")) {
-        findings.push(finding("Blacklist function detected", "bad", "Deployer can freeze specific addresses"));
+
+      // Summary concerns for verdict generation
+      if (bytecodeAnalysis.hasMintFunction && bytecodeAnalysis.ownershipRenounced !== true) {
+        topConcerns.push("mint function active");
+      }
+      if (bytecodeAnalysis.hasBlacklistFunction && bytecodeAnalysis.ownershipRenounced !== true) {
         topConcerns.push("blacklist capability");
-        riskScore += 2;
       }
-      if (sourceHas(sourceCode, "owner")) {
-        findings.push(finding("Owner privileges detected", "warn"));
-        riskScore += 1;
+      if (bytecodeAnalysis.isProxy && bytecodeAnalysis.hasUpgradeFunction && bytecodeAnalysis.ownershipRenounced !== true) {
+        topConcerns.push("upgradeable by owner");
       }
-
-      const renounced =
-        sourceHas(sourceCode, "renounceownership") ||
-        sourceHas(sourceCode, "ownershiprenounced");
-      if (renounced) {
-        findings.push(finding("Ownership renounce function exists", "good"));
-      } else {
-        findings.push(finding("Ownership renounce not detected", "warn"));
-        riskScore += 2;
+      if (bytecodeAnalysis.hasFeeModification && bytecodeAnalysis.ownershipRenounced !== true) {
+        topConcerns.push("mutable fees");
       }
     }
 
+    // hasSellRestriction is now computed authoritatively
     const hasSellRestriction =
-      !!sourceCode &&
-      (sourceCode.includes("maxwallet") ||
-        sourceCode.includes("maxtx") ||
-        sourceCode.includes("tradingenabled") ||
-        sourceCode.includes("setfee") ||
-        sourceCode.includes("selltax") ||
-        sourceCode.includes("buytax"));
-
-    if (hasSellRestriction && !isStablecoin) {
-      findings.push(finding(
-        "Potential honeypot / sell-restriction logic",
-        "bad",
-        "Contract contains fee or transfer limit controls",
-      ));
-      topConcerns.push("sell restrictions");
-      riskScore += 2;
-    }
-
-    if (
       !isStablecoin &&
-      (sourceHas(sourceCode, "delegatecall") ||
-        sourceCode.includes("implementation") ||
-        sourceCode.includes("upgrade"))
-    ) {
-      findings.push(finding("Upgradeable proxy / backdoor risk", "warn"));
-      riskScore += 2;
-    }
+      (bytecodeAnalysis.hasFeeModification || bytecodeAnalysis.hasMaxTransaction);
 
     /* ── Professional score ── */
     const professionalScore = calculateRiskScore([
@@ -473,7 +488,7 @@ export async function POST(req: Request) {
           Math.min(riskScore, 10),
           holderRisk.topHolderPercent,
           liquidityLock.locked,
-          sourceHas(sourceCode, "owner"),
+          bytecodeAnalysis.ownershipRenounced === false, // owner still active
           hasSellRestriction,
         );
 
@@ -512,8 +527,12 @@ export async function POST(req: Request) {
       {
         id: "proxy",
         label: "Proxy Detection",
-        score: sourceHas(sourceCode, "delegatecall") ? 4 : 8,
-        summary: sourceHas(sourceCode, "delegatecall") ? "Proxy pattern" : "Direct contract",
+        score: bytecodeAnalysis.isProxy
+          ? (bytecodeAnalysis.ownershipRenounced === true ? 7 : 4)
+          : 9,
+        summary: bytecodeAnalysis.isProxy
+          ? `${bytecodeAnalysis.proxyType} proxy${bytecodeAnalysis.ownershipRenounced === true ? ", owner renounced" : ", owner active"}`
+          : "Immutable — not a proxy",
       },
       {
         id: "honeypot",
@@ -555,6 +574,7 @@ export async function POST(req: Request) {
       findings,
       layerScores,
       website: identity.website ?? null,
+      socials: identity.socials,
       marketCap: identity.marketCap,
       beginnerExplanation:
         "Universal multichain analysis including chain detection, identity, liquidity, holder concentration, lock verification, wallet traps, honeypot heuristics, and AI rug-pull prediction.",

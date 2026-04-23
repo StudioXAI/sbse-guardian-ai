@@ -1,11 +1,20 @@
 /* ─────────────────────────────────────────────────────────────
    Token Identity Engine
-   Fixes: ChainInfo-aware (uses CORRECT explorer), no axios,
-   cleaner override flow, types instead of `any` returns.
+   Enhancements: extracts social links (Twitter, Telegram, Discord,
+   GitHub) alongside website. Used for findings + premium report.
    ───────────────────────────────────────────────────────────── */
 
 import { debug } from "./constants";
 import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
+
+export interface SocialLinks {
+  twitter?: string;
+  telegram?: string;
+  discord?: string;
+  github?: string;
+  medium?: string;
+  reddit?: string;
+}
 
 interface StablecoinMeta {
   projectName: string;
@@ -13,6 +22,7 @@ interface StablecoinMeta {
   issuer: string;
   fallbackMarketCap: string;
   knownContracts: string[];
+  socials?: SocialLinks;
 }
 
 const STABLECOIN_OVERRIDES: Record<string, StablecoinMeta> = {
@@ -22,6 +32,10 @@ const STABLECOIN_OVERRIDES: Record<string, StablecoinMeta> = {
     issuer: "Circle",
     fallbackMarketCap: "$54,653,671,157",
     knownContracts: ["0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"],
+    socials: {
+      twitter: "https://twitter.com/circle",
+      github: "https://github.com/circlefin",
+    },
   },
   USDT: {
     projectName: "Tether USD",
@@ -29,6 +43,9 @@ const STABLECOIN_OVERRIDES: Record<string, StablecoinMeta> = {
     issuer: "Tether",
     fallbackMarketCap: "$140,000,000,000",
     knownContracts: ["0xdac17f958d2ee523a2206206994597c13d831ec7"],
+    socials: {
+      twitter: "https://twitter.com/Tether_to",
+    },
   },
   DAI: {
     projectName: "DAI Stablecoin",
@@ -36,6 +53,12 @@ const STABLECOIN_OVERRIDES: Record<string, StablecoinMeta> = {
     issuer: "MakerDAO",
     fallbackMarketCap: "$5,000,000,000",
     knownContracts: ["0x6b175474e89094c44da98b954eedeac495271d0f"],
+    socials: {
+      twitter: "https://twitter.com/MakerDAO",
+      discord: "https://discord.com/invite/RBRumCpEDH",
+      github: "https://github.com/makerdao",
+      reddit: "https://www.reddit.com/r/MakerDAO/",
+    },
   },
 };
 
@@ -72,6 +95,31 @@ async function fetchLiveMarketCap(
   }
 }
 
+/**
+ * Parse DexScreener info.socials / info.websites into our SocialLinks shape.
+ * DexScreener returns: [{ type: "twitter", url: "..." }, ...]
+ */
+function extractSocials(info: any): SocialLinks {
+  const socials: SocialLinks = {};
+  if (!info) return socials;
+
+  const socialsArr: any[] = Array.isArray(info.socials) ? info.socials : [];
+  for (const item of socialsArr) {
+    const type = String(item?.type || "").toLowerCase();
+    const url = item?.url;
+    if (!url || typeof url !== "string") continue;
+
+    if (type === "twitter" && !socials.twitter) socials.twitter = url;
+    else if (type === "telegram" && !socials.telegram) socials.telegram = url;
+    else if (type === "discord" && !socials.discord) socials.discord = url;
+    else if (type === "github" && !socials.github) socials.github = url;
+    else if (type === "medium" && !socials.medium) socials.medium = url;
+    else if (type === "reddit" && !socials.reddit) socials.reddit = url;
+  }
+
+  return socials;
+}
+
 export interface TokenIdentity {
   projectName: string;
   symbol: string;
@@ -79,6 +127,7 @@ export interface TokenIdentity {
   marketCap: string;
   website: string | null;
   issuer?: string;
+  socials: SocialLinks;
 }
 
 export async function fetchTokenIdentity(
@@ -98,6 +147,7 @@ export async function fetchTokenIdentity(
         marketCap,
         website: meta.website,
         issuer: meta.issuer,
+        socials: meta.socials ?? {},
       };
     }
 
@@ -133,6 +183,7 @@ export async function fetchTokenIdentity(
         marketCap,
         website: meta.website,
         issuer: meta.issuer,
+        socials: meta.socials ?? {},
       };
     }
 
@@ -150,10 +201,13 @@ export async function fetchTokenIdentity(
           dex: "Unknown",
           marketCap: "Unknown",
           website: null,
+          socials: {},
         };
       }
       pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
       const main = pairs[0];
+      const socials = extractSocials(main.info);
+
       return {
         projectName: main.baseToken?.name || projectName,
         symbol: main.baseToken?.symbol || symbol,
@@ -162,9 +216,17 @@ export async function fetchTokenIdentity(
           ? `$${Math.round(main.marketCap).toLocaleString()}`
           : "Unknown",
         website: main.info?.websites?.[0]?.url || null,
+        socials,
       };
     } catch {
-      return { projectName, symbol, dex: "Unknown", marketCap: "Unknown", website: null };
+      return {
+        projectName,
+        symbol,
+        dex: "Unknown",
+        marketCap: "Unknown",
+        website: null,
+        socials: {},
+      };
     }
   } catch (error) {
     debug("Token identity fetch failed:", error);
@@ -174,6 +236,7 @@ export async function fetchTokenIdentity(
       dex: "Unknown",
       marketCap: "Unknown",
       website: null,
+      socials: {},
     };
   }
 }

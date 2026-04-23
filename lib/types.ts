@@ -61,6 +61,14 @@ export interface AuditReport {
   layerScores: LayerScore[];
 
   website?: string | null;
+  socials?: {
+    twitter?: string;
+    telegram?: string;
+    discord?: string;
+    github?: string;
+    medium?: string;
+    reddit?: string;
+  };
   marketCap?: string;
 
   beginnerExplanation: string;
