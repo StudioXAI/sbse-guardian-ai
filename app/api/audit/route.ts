@@ -277,18 +277,22 @@ export async function POST(req: Request) {
       r.status === "fulfilled" ? r.value : fallback;
 
     const liquidityInfo = unwrap(liquidityInfoRes, {
+      dataAvailable: false,
       found: false,
       institutional: false,
       message: "Unavailable",
     });
     const holderRisk = unwrap(holderRiskRes, {
-      risky: true, topHolderPercent: 0, message: "Unavailable",
+      dataAvailable: false,
+      risky: false, topHolderPercent: 0, message: "Unavailable",
     });
     const liquidityLock = unwrap(liquidityLockRes, {
-      locked: false, risky: true, findings: ["Liquidity lock check unavailable"],
+      dataAvailable: false,
+      locked: false, risky: false, findings: [],
     });
     const walletTrap = unwrap(walletTrapRes, {
-      risky: true, findings: ["Wallet trap check unavailable"],
+      dataAvailable: false,
+      risky: false, findings: [],
     });
     const sourceData = unwrap(sourceRes, null);
     const honeypotResult = unwrap(honeypotRes, {
