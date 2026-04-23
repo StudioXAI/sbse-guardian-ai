@@ -9,7 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { verifyPayment } from "@/lib/verifyPayment";
 import { recordUnlock, isUnlocked } from "@/lib/unlockStore";
 import { debug } from "@/lib/constants";
-import { checkRateLimit } from "@/lib/rateLimit";
+import { rateLimit, clientKey } from "@/lib/rateLimit";
 
 const CONTRACT_REGEX = /^0x[a-fA-F0-9]{40}$/;
 const TX_REGEX = /^0x[a-fA-F0-9]{64}$/;
@@ -17,12 +17,17 @@ const TX_REGEX = /^0x[a-fA-F0-9]{64}$/;
 export async function POST(req: NextRequest) {
   try {
     // Rate limit
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "unknown";
-    const allowed = checkRateLimit(ip);
-    if (!allowed) {
+    const rl = rateLimit(clientKey(req));
+    if (!rl.allowed) {
       return NextResponse.json(
-        { success: false, message: "Rate limit exceeded. Please wait a moment." },
-        { status: 429 },
+        {
+          success: false,
+          message: `Rate limit exceeded. Try again in ${rl.retryAfterSec}s.`,
+        },
+        {
+          status: 429,
+          headers: { "Retry-After": String(rl.retryAfterSec) },
+        },
       );
     }
 
