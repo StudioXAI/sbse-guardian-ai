@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
-import { Geist, JetBrains_Mono, Fraunces } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const geist = Geist({
@@ -7,22 +7,15 @@ const geist = Geist({
   subsets: ["latin"],
 });
 
-const fraunces = Fraunces({
-  variable: "--font-display",
-  subsets: ["latin"],
-  axes: ["SOFT", "opsz"],
-  style: ["normal", "italic"],
-});
-
-const jetbrains = JetBrains_Mono({
+const geistMono = Geist_Mono({
   variable: "--font-mono",
   subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: "SbSe Guardian — Multichain Smart Contract Intelligence",
+  title: "SbSe Guardian — Smart Contract Intelligence",
   description:
-    "Don't audit code. Ask the agent. Institutional-grade smart-contract analysis across 35+ EVM chains — Ethereum, Base, Arbitrum, BSC, Polygon, Optimism, and more.",
+    "AI-powered security analysis for any token across 35+ EVM chains. Plain-English verdicts in seconds.",
   applicationName: "SbSe Guardian",
   authors: [{ name: "SbSe Protocol" }],
   keywords: [
@@ -38,7 +31,12 @@ export const metadata: Metadata = {
     description: "Smart Contract Intelligence for DeFi.",
     type: "website",
   },
-  themeColor: "#0a0807",
+};
+
+export const viewport: Viewport = {
+  themeColor: "#07080a",
+  width: "device-width",
+  initialScale: 1,
 };
 
 export default function RootLayout({
@@ -47,7 +45,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geist.variable} ${fraunces.variable} ${jetbrains.variable} h-full antialiased`}
+      className={`${geist.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

@@ -1,171 +1,247 @@
 @import "tailwindcss";
 
 /* ─────────────────────────────────────────────────────────────
-   Design System
-   Aesthetic: editorial / intelligence-magazine
-   - warm near-black background (not cold pure black)
-   - cream text with slight warmth
-   - amber accent (the detective's flashlight)
-   - Fraunces italic serif for display moments
-   - JetBrains Mono for technical data
+   Design System — Linear / Vercel inspired
+   Tight grid. Geist only. Subtle gradient accents.
+   Dense but readable. Zero editorial flourish.
    ───────────────────────────────────────────────────────────── */
 
 :root {
-  /* Surface */
-  --bg: #0a0807;
-  --bg-elevated: #14110f;
-  --bg-overlay: rgba(255, 249, 240, 0.03);
-  --border: rgba(255, 249, 240, 0.08);
-  --border-strong: rgba(255, 249, 240, 0.16);
+  /* Surfaces */
+  --bg: #07080a;
+  --bg-elevated: #0d0f14;
+  --bg-subtle: rgba(255, 255, 255, 0.02);
+  --bg-hover: rgba(255, 255, 255, 0.04);
+
+  /* Borders */
+  --border: rgba(255, 255, 255, 0.06);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-accent: rgba(108, 99, 255, 0.25);
 
   /* Text */
-  --fg: #f3eee8;
-  --fg-muted: rgba(243, 238, 232, 0.62);
-  --fg-dim: rgba(243, 238, 232, 0.38);
+  --fg: #ededed;
+  --fg-muted: rgba(237, 237, 237, 0.62);
+  --fg-dim: rgba(237, 237, 237, 0.38);
 
-  /* Signal colors */
-  --amber: #f5a623;
-  --amber-dim: rgba(245, 166, 35, 0.18);
-  --red: #e86464;
-  --red-dim: rgba(232, 100, 100, 0.15);
-  --green: #7ab87a;
-  --green-dim: rgba(122, 184, 122, 0.15);
-  --blue: #6ea4d3;
-  --blue-dim: rgba(110, 164, 211, 0.15);
+  /* Signal palette (Linear-style, less warm than before) */
+  --accent: #6c63ff;          /* Electric indigo — Linear's hero color */
+  --accent-soft: #8b84ff;
+  --accent-dim: rgba(108, 99, 255, 0.14);
+  --accent-glow: rgba(108, 99, 255, 0.35);
+
+  --success: #4ade80;
+  --success-dim: rgba(74, 222, 128, 0.12);
+  --warning: #facc15;
+  --warning-dim: rgba(250, 204, 21, 0.12);
+  --danger: #f87171;
+  --danger-dim: rgba(248, 113, 113, 0.12);
+  --info: #60a5fa;
+  --info-dim: rgba(96, 165, 250, 0.12);
+
+  /* Typography scale */
+  --text-xs: 11px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+  --text-4xl: 48px;
+  --text-5xl: 64px;
+
+  /* Transitions */
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 @theme inline {
   --color-background: var(--bg);
   --color-foreground: var(--fg);
   --font-sans: var(--font-sans);
-  --font-display: var(--font-display);
   --font-mono: var(--font-mono);
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
-html,
-body {
+html, body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font-sans), system-ui, sans-serif;
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  letter-spacing: -0.01em;
 }
 
-/* Subtle film-grain texture across the whole app.
-   Makes dark surfaces feel less flat / cheap. */
+/* Background: ambient grid + radial accent glow.
+   Linear-style atmospheric depth without distracting. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 100;
-  opacity: 0.04;
-  mix-blend-mode: overlay;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' /%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  z-index: 0;
+  background-image:
+    radial-gradient(ellipse 800px 500px at 20% 0%, var(--accent-dim), transparent 50%),
+    radial-gradient(ellipse 600px 400px at 100% 20%, rgba(108, 99, 255, 0.06), transparent 60%),
+    linear-gradient(to bottom, transparent, var(--bg) 80%);
 }
 
-/* Utility classes */
-.font-display {
-  font-family: var(--font-display), serif;
-  font-feature-settings: "ss01";
+/* Dot grid overlay — very subtle, Vercel-style */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: radial-gradient(circle at 1px 1px, rgba(255, 255, 255, 0.06) 1px, transparent 0);
+  background-size: 32px 32px;
+  mask-image: radial-gradient(ellipse at center, black 40%, transparent 90%);
+  -webkit-mask-image: radial-gradient(ellipse at center, black 40%, transparent 90%);
+  opacity: 0.6;
 }
+
+main, nav, footer {
+  position: relative;
+  z-index: 1;
+}
+
+/* ── Typography utilities ── */
 .font-mono {
-  font-family: var(--font-mono), monospace;
+  font-family: var(--font-mono), ui-monospace, monospace;
+  letter-spacing: 0;
 }
 
-/* Gradient text used on hero headline */
+/* Hero gradient text — Linear signature move */
 .text-gradient {
-  background: linear-gradient(110deg, var(--fg) 10%, rgba(245, 166, 35, 0.9) 50%, var(--fg) 90%);
+  background: linear-gradient(135deg, #ffffff 0%, #a8a5ff 50%, #ededed 100%);
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
 }
 
-/* ── Animations ── */
-
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(14px); }
-  to   { opacity: 1; transform: translateY(0); }
+.text-gradient-accent {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-soft) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
 }
 
+/* ── Card primitives ── */
+.card {
+  position: relative;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: border-color 0.15s var(--ease), background 0.15s var(--ease);
+}
+
+.card-hover:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+/* Glow card — for premium / verdict moments */
+.card-glow {
+  position: relative;
+}
+.card-glow::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, var(--accent-glow), transparent 40%, var(--accent-glow));
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* ── Animations ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
 @keyframes fadeIn {
   from { opacity: 0; }
-  to   { opacity: 1; }
+  to { opacity: 1; }
 }
-
-@keyframes slideIn {
-  from { opacity: 0; transform: translateX(-12px); }
-  to   { opacity: 1; transform: translateX(0); }
-}
-
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }
-  50%      { opacity: 1; }
+  50% { opacity: 1; }
 }
-
 @keyframes shimmer {
-  0%   { background-position: 200% 0; }
+  0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-
-@keyframes breathe {
-  0%, 100% { transform: scale(1); opacity: 0.85; }
-  50%      { transform: scale(1.05); opacity: 1; }
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-glow); }
+  50% { box-shadow: 0 0 20px 2px var(--accent-glow); }
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
-.anim-fade-up { animation: fadeUp 0.55s cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-.anim-fade-in { animation: fadeIn 0.4s ease-out both; }
-.anim-slide-in { animation: slideIn 0.4s ease-out both; }
+.anim-fade-up { animation: fadeUp 0.4s var(--ease) both; }
+.anim-fade-in { animation: fadeIn 0.3s ease-out both; }
 
 .skeleton {
   background: linear-gradient(
     110deg,
-    rgba(255, 249, 240, 0.04) 30%,
-    rgba(255, 249, 240, 0.09) 50%,
-    rgba(255, 249, 240, 0.04) 70%
+    rgba(255, 255, 255, 0.04) 30%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.04) 70%
   );
   background-size: 200% 100%;
-  animation: shimmer 1.4s ease-in-out infinite;
+  animation: shimmer 1.5s ease-in-out infinite;
 }
 
-/* Respect user motion preferences */
 @media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
+  *, *::before, *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
 }
 
-/* Nicer focus rings */
+/* ── Focus ── */
 :focus-visible {
-  outline: 2px solid var(--amber);
-  outline-offset: 3px;
-  border-radius: 4px;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
 }
 
-/* Scrollbar */
+/* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 249, 240, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   border-radius: 999px;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 249, 240, 0.2); }
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
 
-/* Text selection */
+/* ── Selection ── */
 ::selection {
-  background: var(--amber-dim);
+  background: var(--accent-dim);
   color: var(--fg);
+}
+
+/* ── Utility classes ── */
+.label-xs {
+  font-family: var(--font-mono), monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+.label-sm {
+  font-family: var(--font-mono), monospace;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
 }

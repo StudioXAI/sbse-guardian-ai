@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { AuditReport } from "@/lib/types";
 import VerdictCard from "./VerdictCard";
+import AiSummaryCard from "./AiSummaryCard";
 import MetricCards from "./MetricCards";
 import RiskDonut from "./RiskDonut";
 import SecurityRadar from "./SecurityRadar";
@@ -20,7 +21,9 @@ export default function AuditReportView({
   const handleCopy = async (what: "addr" | "json") => {
     try {
       const text =
-        what === "addr" ? report.contractAddress : JSON.stringify(report, null, 2);
+        what === "addr"
+          ? report.contractAddress
+          : JSON.stringify(report, null, 2);
       await navigator.clipboard.writeText(text);
       setCopied(what);
       setTimeout(() => setCopied(null), 2000);
@@ -29,20 +32,19 @@ export default function AuditReportView({
     }
   };
 
-  const shortAddr = `${report.contractAddress.slice(0, 6)}…${report.contractAddress.slice(-4)}`;
+  const shortAddr = `${report.contractAddress.slice(
+    0,
+    6,
+  )}…${report.contractAddress.slice(-4)}`;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* Action bar */}
       <div
-        className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border px-5 py-3 anim-fade-up"
-        style={{ borderColor: "var(--border)", background: "var(--bg-elevated)" }}
+        className="card flex flex-wrap items-center justify-between gap-4 px-5 py-3 anim-fade-up"
       >
         <div className="flex items-center gap-3 min-w-0">
-          <span className="font-mono text-xs tracking-[0.2em] uppercase"
-                style={{ color: "var(--fg-dim)" }}>
-            Scanned
-          </span>
+          <span className="label-xs">Scanned</span>
           <button
             onClick={() => handleCopy("addr")}
             className="font-mono text-sm truncate hover:opacity-70 transition-opacity"
@@ -51,7 +53,12 @@ export default function AuditReportView({
           >
             {shortAddr}
             {copied === "addr" && (
-              <span className="ml-2" style={{ color: "var(--amber)" }}>copied</span>
+              <span
+                className="ml-2"
+                style={{ color: "var(--accent-soft)" }}
+              >
+                copied
+              </span>
             )}
           </button>
         </div>
@@ -62,20 +69,19 @@ export default function AuditReportView({
             onClick={() => handleCopy("json")}
           />
           {onScanAnother && (
-            <IconButton
-              label="Scan another"
-              onClick={onScanAnother}
-              primary
-            />
+            <IconButton label="Scan another" onClick={onScanAnother} primary />
           )}
         </div>
       </div>
 
       <VerdictCard report={report} />
 
+      {/* AI Summary — renders null if not available */}
+      <AiSummaryCard report={report} />
+
       <MetricCards report={report} />
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         <RiskDonut report={report} />
         <SecurityRadar report={report} />
       </div>
@@ -83,12 +89,17 @@ export default function AuditReportView({
       <FindingsList report={report} />
 
       {/* Footer meta */}
-      <div
-        className="rounded-2xl border p-6 anim-fade-up"
-        style={{ borderColor: "var(--border)", background: "var(--bg-elevated)" }}
-      >
-        <div className="grid gap-x-8 gap-y-4 grid-cols-2 md:grid-cols-4 text-sm">
-          <Meta label="Chain" value={`${report.chain} (${report.chainIdNum})`} />
+      <div className="card p-7 anim-fade-up">
+        <div
+          className="grid gap-x-8 gap-y-4 text-sm"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
+          }}
+        >
+          <Meta
+            label="Chain"
+            value={`${report.chain} (${report.chainIdNum})`}
+          />
           <Meta label="Native Token" value={report.nativeToken} />
           <Meta label="Token Type" value={report.tokenType} />
           <Meta
@@ -97,8 +108,14 @@ export default function AuditReportView({
             mono
           />
         </div>
-        <p className="text-xs mt-6 pt-4 border-t"
-           style={{ color: "var(--fg-dim)", borderColor: "var(--border)" }}>
+        <p
+          className="text-xs mt-6 pt-4 border-t"
+          style={{
+            color: "var(--fg-dim)",
+            borderColor: "var(--border)",
+            lineHeight: 1.6,
+          }}
+        >
           {report.beginnerExplanation}
         </p>
       </div>
@@ -119,13 +136,16 @@ function IconButton({
     <button
       type="button"
       onClick={onClick}
-      className="px-4 py-2 rounded-lg font-mono text-xs tracking-[0.15em] uppercase transition-all hover:opacity-85"
+      className="px-4 py-2 rounded-lg font-mono transition-all hover:brightness-110"
       style={{
-        background: primary ? "var(--amber)" : "transparent",
-        color: primary ? "var(--bg)" : "var(--fg-muted)",
+        fontSize: "11px",
+        letterSpacing: "0.1em",
+        textTransform: "uppercase",
+        background: primary ? "var(--accent)" : "transparent",
+        color: primary ? "#fff" : "var(--fg-muted)",
         borderWidth: 1,
         borderStyle: "solid",
-        borderColor: primary ? "var(--amber)" : "var(--border-strong)",
+        borderColor: primary ? "var(--accent)" : "var(--border-strong)",
       }}
     >
       {label}
@@ -144,11 +164,16 @@ function Meta({
 }) {
   return (
     <div>
-      <div className="font-mono text-[10px] tracking-[0.25em] uppercase mb-1"
-           style={{ color: "var(--fg-dim)" }}>
+      <div
+        className="label-xs mb-1.5"
+        style={{ color: "var(--fg-dim)" }}
+      >
         {label}
       </div>
-      <div className={mono ? "font-mono text-sm" : "text-sm"} style={{ color: "var(--fg)" }}>
+      <div
+        className={mono ? "font-mono text-sm" : "text-sm"}
+        style={{ color: "var(--fg)" }}
+      >
         {value}
       </div>
     </div>

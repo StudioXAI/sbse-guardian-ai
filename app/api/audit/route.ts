@@ -21,6 +21,7 @@ import { checkHolderRisk } from "@/lib/checkHolderRisk";
 import { checkLiquidityLock } from "@/lib/checkLiquidityLock";
 import { checkWalletTraps } from "@/lib/checkWalletTraps";
 import { predictRugPull } from "@/lib/predictRugPull";
+import { generateAiSummary } from "@/lib/aiSummary";
 
 import { honeypotCheck } from "@/lib/analyzers/honeypotCheck";
 import { ownerCheck } from "@/lib/analyzers/ownerCheck";
@@ -235,6 +236,7 @@ export async function POST(req: Request) {
         beginnerExplanation:
           "This project is verified through the INFI MultiChain CDEX ecosystem and protected by the SbSe Shield system.",
         scannedAt: new Date().toISOString(),
+        aiSummary: null,
       };
       return NextResponse.json(report);
     }
@@ -557,7 +559,16 @@ export async function POST(req: Request) {
       beginnerExplanation:
         "Universal multichain analysis including chain detection, identity, liquidity, holder concentration, lock verification, wallet traps, honeypot heuristics, and AI rug-pull prediction.",
       scannedAt: new Date().toISOString(),
+      aiSummary: null,
     };
+
+    /* ── Generate AI summary (non-blocking — null if API key missing or call fails) ── */
+    try {
+      report.aiSummary = await generateAiSummary(report);
+    } catch (e) {
+      debug("AI summary generation failed:", e);
+      report.aiSummary = null;
+    }
 
     return NextResponse.json(report);
   } catch (error) {

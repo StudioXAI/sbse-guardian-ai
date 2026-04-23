@@ -1,6 +1,5 @@
 /* ─────────────────────────────────────────────────────────────
    Shared types — one contract between API and UI.
-   Prevents the `professionalScore.score` vs number crash.
    ───────────────────────────────────────────────────────────── */
 
 export type SeverityLabel =
@@ -12,6 +11,12 @@ export type SeverityLabel =
   | "Critical";
 
 export type GradeLetter = "A+" | "A" | "B" | "C" | "D" | "F";
+
+export interface AiSummary {
+  verdict: string;
+  paragraphs: string[];
+  bottomLine: string;
+}
 
 export interface AuditReport {
   success: true;
@@ -37,17 +42,17 @@ export interface AuditReport {
   rugPullProbability: number;
   rugPullRisk: SeverityLabel | string;
 
-  /** A-F letter grade derived from riskScore. */
   grade: GradeLetter;
 
-  /** Overall verdict — the single answer the user cares about. */
   verdict: {
     label: "SAFE" | "CAUTION" | "HIGH RISK" | "INSTITUTIONAL";
     headline: string;
     plainEnglish: string;
   };
 
-  /** 0–100 — how confident we are given data-source coverage. */
+  /** AI-generated plain-English summary. Null if API unavailable. */
+  aiSummary: AiSummary | null;
+
   confidence: number;
 
   sbseScore: string | number;

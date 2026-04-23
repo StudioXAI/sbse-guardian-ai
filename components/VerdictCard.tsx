@@ -2,110 +2,134 @@
 
 import type { AuditReport } from "@/lib/types";
 
-const STYLE_MAP: Record<
+const VERDICT_STYLES: Record<
   AuditReport["verdict"]["label"],
-  { border: string; bg: string; text: string; icon: string; accent: string }
+  {
+    color: string;
+    bgGradient: string;
+    borderColor: string;
+    label: string;
+  }
 > = {
   INSTITUTIONAL: {
-    border: "rgba(245,166,35,0.3)",
-    bg: "linear-gradient(135deg, rgba(245,166,35,0.08), rgba(245,166,35,0.02))",
-    text: "var(--amber)",
-    icon: "◈",
-    accent: "var(--amber)",
+    color: "var(--accent)",
+    bgGradient:
+      "linear-gradient(135deg, rgba(108,99,255,0.08), rgba(108,99,255,0.02) 60%)",
+    borderColor: "rgba(108,99,255,0.25)",
+    label: "Institutional",
   },
   SAFE: {
-    border: "rgba(122,184,122,0.3)",
-    bg: "linear-gradient(135deg, rgba(122,184,122,0.08), rgba(122,184,122,0.02))",
-    text: "var(--green)",
-    icon: "◉",
-    accent: "var(--green)",
+    color: "var(--success)",
+    bgGradient:
+      "linear-gradient(135deg, rgba(74,222,128,0.08), rgba(74,222,128,0.02) 60%)",
+    borderColor: "rgba(74,222,128,0.22)",
+    label: "Safe",
   },
   CAUTION: {
-    border: "rgba(245,166,35,0.35)",
-    bg: "linear-gradient(135deg, rgba(245,166,35,0.1), rgba(245,166,35,0.02))",
-    text: "var(--amber)",
-    icon: "◐",
-    accent: "var(--amber)",
+    color: "var(--warning)",
+    bgGradient:
+      "linear-gradient(135deg, rgba(250,204,21,0.08), rgba(250,204,21,0.02) 60%)",
+    borderColor: "rgba(250,204,21,0.25)",
+    label: "Caution",
   },
   "HIGH RISK": {
-    border: "rgba(232,100,100,0.4)",
-    bg: "linear-gradient(135deg, rgba(232,100,100,0.1), rgba(232,100,100,0.02))",
-    text: "var(--red)",
-    icon: "◆",
-    accent: "var(--red)",
+    color: "var(--danger)",
+    bgGradient:
+      "linear-gradient(135deg, rgba(248,113,113,0.1), rgba(248,113,113,0.02) 60%)",
+    borderColor: "rgba(248,113,113,0.3)",
+    label: "High Risk",
   },
 };
 
 export default function VerdictCard({ report }: { report: AuditReport }) {
-  const style = STYLE_MAP[report.verdict.label] ?? STYLE_MAP.SAFE;
+  const style = VERDICT_STYLES[report.verdict.label] ?? VERDICT_STYLES.SAFE;
 
   return (
     <section
-      className="relative overflow-hidden rounded-[28px] border p-8 md:p-12 anim-fade-up"
+      className="relative overflow-hidden rounded-xl border p-8 md:p-10 anim-fade-up"
       style={{
-        borderColor: style.border,
-        background: style.bg,
+        borderColor: style.borderColor,
+        background: style.bgGradient,
       }}
       aria-labelledby="verdict-label"
     >
-      {/* Top metadata strip */}
+      {/* Meta strip */}
       <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <div className="flex items-center gap-3 font-mono text-xs tracking-[0.2em] uppercase"
-             style={{ color: "var(--fg-muted)" }}>
-          <span>Scan Verdict</span>
-          <span style={{ color: "var(--fg-dim)" }}>·</span>
+        <div
+          className="flex items-center gap-3 label-xs"
+          style={{ color: "var(--fg-muted)" }}
+        >
+          <span>Verdict</span>
+          <span style={{ color: "var(--fg-dim)" }}>/</span>
           <span>{report.chain}</span>
-          <span style={{ color: "var(--fg-dim)" }}>·</span>
+          <span style={{ color: "var(--fg-dim)" }}>/</span>
           <span>{report.tokenType}</span>
         </div>
-        <div className="flex items-center gap-2 font-mono text-xs"
-             style={{ color: "var(--fg-muted)" }}>
+        <div className="flex items-center gap-2 label-xs" style={{ color: "var(--fg-muted)" }}>
           <span
             className="inline-block h-1.5 w-1.5 rounded-full"
-            style={{ background: style.accent, animation: "pulse 2s ease-in-out infinite" }}
+            style={{
+              background: style.color,
+              animation: "pulse 2.2s ease-in-out infinite",
+            }}
           />
           <span>Confidence {report.confidence}%</span>
         </div>
       </div>
 
-      {/* Main verdict */}
-      <div className="flex items-start gap-6">
+      {/* Verdict headline */}
+      <div className="mb-8">
         <div
-          className="shrink-0 text-5xl md:text-6xl leading-none"
-          style={{ color: style.accent }}
-          aria-hidden
+          id="verdict-label"
+          className="label-sm mb-4"
+          style={{ color: style.color }}
         >
-          {style.icon}
+          {style.label}
         </div>
-
-        <div className="flex-1 min-w-0">
-          <p
-            id="verdict-label"
-            className="font-mono text-xs tracking-[0.3em] uppercase mb-3"
-            style={{ color: style.text }}
-          >
-            {report.verdict.label}
-          </p>
-          <h2 className="font-display italic text-4xl md:text-6xl leading-[1.05] tracking-tight mb-5"
-              style={{ color: "var(--fg)" }}>
-            {report.verdict.headline}.
-          </h2>
-          <p className="text-lg md:text-xl leading-relaxed max-w-3xl"
-             style={{ color: "var(--fg-muted)" }}>
-            {report.verdict.plainEnglish}
-          </p>
-        </div>
+        <h1
+          className="text-gradient tracking-tight leading-[1.05]"
+          style={{
+            fontSize: "clamp(32px, 5.2vw, 60px)",
+            fontWeight: 600,
+            letterSpacing: "-0.03em",
+          }}
+        >
+          {report.verdict.headline}
+        </h1>
+        <p
+          className="mt-5 leading-relaxed max-w-3xl"
+          style={{
+            fontSize: "17px",
+            color: "var(--fg-muted)",
+          }}
+        >
+          {report.verdict.plainEnglish}
+        </p>
       </div>
 
-      {/* Bottom context row */}
-      <div className="mt-10 flex flex-wrap gap-x-10 gap-y-4 pt-6 border-t"
-           style={{ borderColor: "var(--border)" }}>
+      {/* Meta grid */}
+      <div
+        className="grid gap-x-10 gap-y-4 pt-6 border-t"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          borderColor: "var(--border)",
+        }}
+      >
         <MetaItem label="Project" value={report.project} />
-        <MetaItem label="Symbol" value={report.verified ? "VERIFIED" : "UNVERIFIED"} mono />
-        <MetaItem label="Grade" value={report.grade} mono accent={style.accent} />
+        <MetaItem
+          label="Source"
+          value={report.verified ? "Verified" : "Unverified"}
+          mono
+        />
+        <MetaItem
+          label="Grade"
+          value={report.grade}
+          mono
+          accent={style.color}
+        />
         <MetaItem
           label="Rug Pull"
-          value={`${report.rugPullProbability}% — ${report.rugPullRisk}`}
+          value={`${report.rugPullProbability}% · ${report.rugPullRisk}`}
           mono
         />
       </div>
@@ -126,12 +150,14 @@ function MetaItem({
 }) {
   return (
     <div>
-      <div className="font-mono text-[10px] tracking-[0.25em] uppercase mb-1"
-           style={{ color: "var(--fg-dim)" }}>
+      <div
+        className="label-xs mb-1.5"
+        style={{ color: "var(--fg-dim)" }}
+      >
         {label}
       </div>
       <div
-        className={`${mono ? "font-mono" : ""} text-sm`}
+        className={mono ? "font-mono text-sm" : "text-sm"}
         style={{ color: accent || "var(--fg)" }}
       >
         {value}
