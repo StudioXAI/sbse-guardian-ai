@@ -94,6 +94,7 @@ type Status =
   | "sending"
   | "confirming"
   | "verifying"
+  | "verify_pending"      // tx sent but server couldn't find it yet
   | "unlocked"
   | "error";
 
@@ -223,20 +224,8 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
         throw new Error("Transaction reverted on-chain");
       }
 
-      setStatus("verifying");
-      const res = await fetch("/api/unlock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          txHash: tx.hash,
-          chainId: currentChain.id,
-          contractAddress: report.contractAddress,
-        }),
-      });
-      const json = await res.json();
-      if (!json.success) throw new Error(json.message || "Verification failed");
-
-      setStatus("unlocked");
+      // Server-side verify (with retry on transient failures)
+      await verifyOnServer(tx.hash, currentChain.id);
     } catch (e: any) {
       console.error("Payment failed:", e);
       let msg = "Payment failed";
@@ -251,6 +240,61 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
       setStatus("error");
     }
   }, [walletProvider, address, currentChain, paymentToken, isReceiverWallet, report.contractAddress]);
+
+  /**
+   * Verify a payment tx on the server. Separated from pay() so we can
+   * retry verification without re-sending payment when the server hits
+   * a transient "not yet mined" state.
+   */
+  const verifyOnServer = useCallback(
+    async (hash: string, chainIdNum: number) => {
+      setStatus("verifying");
+      setError(null);
+      try {
+        const res = await fetch("/api/unlock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            txHash: hash,
+            chainId: chainIdNum,
+            contractAddress: report.contractAddress,
+          }),
+        });
+        const json = await res.json();
+
+        if (json.success) {
+          setStatus("unlocked");
+          return;
+        }
+
+        // Transient: tx not yet indexed. Keep tx hash, let user retry.
+        if (json.errorCode === "NOT_YET_MINED") {
+          setStatus("verify_pending");
+          setError(
+            "Transaction sent but not yet visible to our verifier. Wait 30 seconds then click 'Retry verification'.",
+          );
+          return;
+        }
+
+        // Permanent failure
+        setError(json.message || "Verification failed");
+        setStatus("error");
+      } catch (e: any) {
+        console.error("Server verification failed:", e);
+        setStatus("verify_pending");
+        setError(
+          "Could not reach verification server. Your payment is safe on-chain — click 'Retry verification' in a moment.",
+        );
+      }
+    },
+    [report.contractAddress],
+  );
+
+  /** Manual retry button handler. */
+  const retryVerification = useCallback(() => {
+    if (!txHash || !currentChain) return;
+    void verifyOnServer(txHash, currentChain.id);
+  }, [txHash, currentChain, verifyOnServer]);
 
   const shortAddr = address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "";
 
@@ -373,6 +417,13 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
       {/* Flow states */}
       {status === "unlocked" ? (
         <UnlockedState chainId={chainId as number | undefined} txHash={txHash} />
+      ) : status === "verify_pending" && txHash ? (
+        <VerifyPendingState
+          txHash={txHash}
+          chainId={chainId as number | undefined}
+          onRetry={retryVerification}
+          error={error}
+        />
       ) : isReceiverWallet ? (
         <SelfPayWarning onDisconnect={() => disconnect()} />
       ) : !isConnected ? (
@@ -408,7 +459,7 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
         />
       )}
 
-      {/* Error */}
+      {/* Error (only shown for terminal errors; verify_pending has its own UI) */}
       {error && status === "error" && (
         <div
           className="mt-4 p-3 rounded-lg text-xs"
@@ -636,6 +687,84 @@ function UnlockedState({
           </a>
         )}
       </p>
+    </div>
+  );
+}
+
+function VerifyPendingState({
+  txHash,
+  chainId,
+  onRetry,
+  error,
+}: {
+  txHash: string;
+  chainId?: number;
+  onRetry: () => void;
+  error: string | null;
+}) {
+  const txUrl = chainId ? explorerTxUrl(chainId, txHash) : "#";
+  return (
+    <div
+      className="p-5 rounded-lg"
+      style={{
+        background: "var(--warning-dim)",
+        border: "1px solid rgba(250,204,21,0.3)",
+      }}
+    >
+      <div
+        className="flex items-center gap-2 mb-2"
+        style={{ color: "var(--warning)" }}
+      >
+        <svg
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 6v6l4 2" />
+        </svg>
+        <span className="font-semibold text-sm">
+          Transaction sent — verification pending
+        </span>
+      </div>
+      <p
+        className="text-sm mb-3"
+        style={{ color: "var(--fg-muted)", lineHeight: 1.5 }}
+      >
+        {error ||
+          "Your payment is on-chain but our verifier hasn't seen it yet. This usually clears within 30 seconds."}
+      </p>
+      {txHash && (
+        <p className="text-xs mb-4" style={{ color: "var(--fg-dim)" }}>
+          Tx:{" "}
+          <a
+            href={txUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-mono hover:underline"
+            style={{ color: "var(--accent-soft)", wordBreak: "break-all" }}
+          >
+            {txHash}
+          </a>
+        </p>
+      )}
+      <button
+        type="button"
+        onClick={onRetry}
+        className="px-4 py-2 rounded-lg text-sm font-medium hover:brightness-110 transition"
+        style={{
+          background: "var(--accent)",
+          color: "#fff",
+          boxShadow: "0 0 12px rgba(108,99,255,0.3)",
+        }}
+      >
+        Retry verification →
+      </button>
     </div>
   );
 }

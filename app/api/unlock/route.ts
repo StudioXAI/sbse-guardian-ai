@@ -1,8 +1,13 @@
 /* ─────────────────────────────────────────────────────────────
    POST /api/unlock
    Body: { txHash, chainId, contractAddress }
-   Verifies on-chain USDT payment and records the unlock for this
-   (wallet, contract) pair.
+   Verifies on-chain payment, records unlock.
+
+   Hotfix 2 changes:
+   - Passes errorCode through to client so UI can show
+     "Retry verification" button for NOT_YET_MINED instead of
+     treating every failure as final
+   - Idempotent: re-submitting the same tx hash is safe
    ───────────────────────────────────────────────────────────── */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -16,12 +21,12 @@ const TX_REGEX = /^0x[a-fA-F0-9]{64}$/;
 
 export async function POST(req: NextRequest) {
   try {
-    // Rate limit
     const rl = rateLimit(clientKey(req));
     if (!rl.allowed) {
       return NextResponse.json(
         {
           success: false,
+          errorCode: "RATE_LIMIT",
           message: `Rate limit exceeded. Try again in ${rl.retryAfterSec}s.`,
         },
         {
@@ -36,48 +41,54 @@ export async function POST(req: NextRequest) {
     const chainId = Number(body?.chainId || 0);
     const contractAddress = String(body?.contractAddress || "");
 
-    // Input validation
     if (!TX_REGEX.test(txHash)) {
       return NextResponse.json(
-        { success: false, message: "Invalid transaction hash" },
+        { success: false, errorCode: "BAD_INPUT", message: "Invalid transaction hash" },
         { status: 400 },
       );
     }
     if (!CONTRACT_REGEX.test(contractAddress)) {
       return NextResponse.json(
-        { success: false, message: "Invalid contract address" },
+        { success: false, errorCode: "BAD_INPUT", message: "Invalid contract address" },
         { status: 400 },
       );
     }
     if (!Number.isInteger(chainId) || chainId <= 0) {
       return NextResponse.json(
-        { success: false, message: "Invalid chain ID" },
+        { success: false, errorCode: "BAD_INPUT", message: "Invalid chain ID" },
         { status: 400 },
       );
     }
 
-    // Verify payment on-chain
     const result = await verifyPayment(txHash, chainId);
 
     if (!result.verified) {
+      // Use 200 for transient errors so client retry logic works cleanly;
+      // only use 400 for permanent failures
+      const isTransient = result.errorCode === "NOT_YET_MINED";
       return NextResponse.json(
         {
           success: false,
+          errorCode: result.errorCode,
           message: result.reason || "Payment verification failed",
           details: result,
+        },
+        { status: isTransient ? 202 : 400 },
+      );
+    }
+
+    if (!result.from) {
+      return NextResponse.json(
+        {
+          success: false,
+          errorCode: "NO_SENDER",
+          message: "Could not determine sender wallet from tx logs",
         },
         { status: 400 },
       );
     }
 
-    // Record the unlock keyed on the paying wallet
-    if (!result.from) {
-      return NextResponse.json(
-        { success: false, message: "Could not determine sender wallet" },
-        { status: 400 },
-      );
-    }
-
+    // Record unlock (idempotent — safe to call repeatedly)
     recordUnlock(result.from, contractAddress, {
       txHash,
       chainId,
@@ -91,6 +102,7 @@ export async function POST(req: NextRequest) {
       contractAddress,
       chainId,
       chainName: result.chainName,
+      stablecoin: result.stablecoin,
       amount: result.amount,
       amountUsd: result.amountUsd,
       txHash,
@@ -98,16 +110,12 @@ export async function POST(req: NextRequest) {
   } catch (error) {
     debug("Unlock verification failed:", error);
     return NextResponse.json(
-      { success: false, message: "Verification error" },
+      { success: false, errorCode: "INTERNAL", message: "Verification error" },
       { status: 500 },
     );
   }
 }
 
-/**
- * GET /api/unlock?wallet=0x...&contract=0x...
- * Returns whether this (wallet, contract) pair has been unlocked.
- */
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
