@@ -1,5 +1,7 @@
 /* ─────────────────────────────────────────────────────────────
    Liquidity Lock Analysis
+   - Returns dataAvailable flag for graceful degradation
+   - Softens "Unable to verify" to neutral info instead of warn
    ───────────────────────────────────────────────────────────── */
 
 import { isInstitutional, debug } from "./constants";
@@ -16,6 +18,8 @@ const KNOWN_LOCKERS = [
 ];
 
 export interface LiquidityLockResult {
+  /** Did we have enough data (verified source code) to analyze? */
+  dataAvailable: boolean;
   locked: boolean;
   risky: boolean;
   findings: string[];
@@ -29,6 +33,7 @@ export async function checkLiquidityLock(
   try {
     if (isInstitutional(symbol)) {
       return {
+        dataAvailable: true,
         locked: true,
         risky: false,
         findings: [
@@ -50,9 +55,10 @@ export async function checkLiquidityLock(
 
     if (!sourceCode) {
       return {
+        dataAvailable: false,
         locked: false,
-        risky: true,
-        findings: ["Unable to verify liquidity lock status"],
+        risky: false, // don't penalize unverified — bytecode analyzer handles that
+        findings: [],
       };
     }
 
@@ -91,9 +97,14 @@ export async function checkLiquidityLock(
       risky = true;
     }
 
-    return { locked, risky, findings };
+    return { dataAvailable: true, locked, risky, findings };
   } catch (error) {
     debug("Liquidity lock check failed:", error);
-    return { locked: false, risky: true, findings: ["Liquidity analysis unavailable"] };
+    return {
+      dataAvailable: false,
+      locked: false,
+      risky: false,
+      findings: [],
+    };
   }
 }

@@ -1,11 +1,14 @@
 /* ─────────────────────────────────────────────────────────────
    Wallet Trap Detection
+   - Returns dataAvailable flag for graceful degradation
+   - Won't emit scary "Unable to fetch" strings
    ───────────────────────────────────────────────────────────── */
 
 import { isInstitutional, debug } from "./constants";
 import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
 
 export interface WalletTrapResult {
+  dataAvailable: boolean;
   risky: boolean;
   findings: string[];
 }
@@ -18,6 +21,7 @@ export async function checkWalletTraps(
   try {
     if (isInstitutional(symbol)) {
       return {
+        dataAvailable: true,
         risky: false,
         findings: [
           "Institutional wallet distribution detected",
@@ -39,7 +43,11 @@ export async function checkWalletTraps(
     const holders = Array.isArray(data?.result) ? data.result : [];
 
     if (!holders.length) {
-      return { risky: true, findings: ["Unable to fetch holder wallet intelligence"] };
+      return {
+        dataAvailable: false,
+        risky: false, // don't penalize data gap
+        findings: [],
+      };
     }
 
     const topHolderPercent = parseFloat(holders[0]?.percentage || "0");
@@ -59,9 +67,9 @@ export async function checkWalletTraps(
     }
 
     findings.push(`Top wallet concentration: ${topHolderPercent}%`);
-    return { risky, findings };
+    return { dataAvailable: true, risky, findings };
   } catch (error) {
     debug("Wallet trap detection failed:", error);
-    return { risky: true, findings: ["Wallet trap analysis unavailable"] };
+    return { dataAvailable: false, risky: false, findings: [] };
   }
 }

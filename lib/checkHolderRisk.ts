@@ -1,14 +1,17 @@
 /* ─────────────────────────────────────────────────────────────
    Holder Risk Analysis
-   - ChainInfo-aware: no more hardcoded etherscan.io
-   - Shared INSTITUTIONAL_TOKENS via isInstitutional()
-   - Native fetch with timeout
+   - Returns a dataAvailable flag so the route can suppress misleading
+     "top holder 0%" messages when holder data couldn't be fetched.
+   - No longer renders scary "Unable to fetch" strings — those are
+     data gaps, not findings.
    ───────────────────────────────────────────────────────────── */
 
 import { isInstitutional, debug } from "./constants";
 import { explorerUrl, fetchJson, type ChainInfo } from "./fetchHelpers";
 
 export interface HolderRiskResult {
+  /** Did we successfully fetch holder data? */
+  dataAvailable: boolean;
   risky: boolean;
   topHolderPercent: number;
   message: string;
@@ -22,6 +25,7 @@ export async function checkHolderRisk(
   try {
     if (isInstitutional(symbol)) {
       return {
+        dataAvailable: true,
         risky: false,
         topHolderPercent: 5,
         message: "Institutional holder structure detected",
@@ -41,23 +45,29 @@ export async function checkHolderRisk(
 
     if (!holders.length) {
       return {
-        risky: true,
+        dataAvailable: false,
+        risky: false, // don't penalize for data unavailable
         topHolderPercent: 0,
-        message: "Unable to fetch holder concentration data",
+        message: "Holder data not indexed on this chain",
       };
     }
 
     const topHolderPercent = Number(holders[0]?.percentage || 0);
 
     if (topHolderPercent >= 50)
-      return { risky: true, topHolderPercent, message: "Critical whale concentration" };
+      return { dataAvailable: true, risky: true, topHolderPercent, message: "Critical whale concentration" };
     if (topHolderPercent >= 25)
-      return { risky: true, topHolderPercent, message: "High holder concentration" };
+      return { dataAvailable: true, risky: true, topHolderPercent, message: "High holder concentration" };
     if (topHolderPercent >= 10)
-      return { risky: false, topHolderPercent, message: "Moderate holder concentration" };
-    return { risky: false, topHolderPercent, message: "Healthy decentralized distribution" };
+      return { dataAvailable: true, risky: false, topHolderPercent, message: "Moderate holder concentration" };
+    return { dataAvailable: true, risky: false, topHolderPercent, message: "Healthy decentralized distribution" };
   } catch (error) {
     debug("Holder analysis failed:", error);
-    return { risky: true, topHolderPercent: 0, message: "Holder analysis unavailable" };
+    return {
+      dataAvailable: false,
+      risky: false,
+      topHolderPercent: 0,
+      message: "Holder data not indexed on this chain",
+    };
   }
 }

@@ -391,45 +391,90 @@ export async function POST(req: Request) {
       findings.push(finding("Institutional Liquidity Infrastructure", "good"));
       findings.push(finding("Multi-venue liquidity verified", "good"));
     } else if (liquidityInfo.found) {
-      findings.push(finding(`Liquidity DEX: ${liquidityInfo.dex}`, "info"));
-      findings.push(finding(`Liquidity: ${liquidityInfo.liquidity}`, "info"));
-      findings.push(finding(`24h Volume: ${liquidityInfo.volume24h}`, "info"));
-    } else {
-      findings.push(finding("No verified blockchain liquidity found", "bad"));
-      topConcerns.push("no verified liquidity");
+      if (liquidityInfo.dex) {
+        findings.push(finding(`Liquidity DEX: ${liquidityInfo.dex}`, "info"));
+      }
+      if (liquidityInfo.liquidity) {
+        // Tone the severity based on actual USD liquidity
+        const sev: "good" | "info" | "warn" =
+          liquidityInfo.liquidityUsd && liquidityInfo.liquidityUsd >= 100_000
+            ? "good"
+            : liquidityInfo.liquidityUsd && liquidityInfo.liquidityUsd >= 10_000
+            ? "info"
+            : "warn";
+        findings.push(finding(`Liquidity: ${liquidityInfo.liquidity}`, sev));
+      }
+      if (liquidityInfo.volume24h) {
+        findings.push(finding(`24h Volume: ${liquidityInfo.volume24h}`, "info"));
+      }
+    } else if (liquidityInfo.dataAvailable) {
+      // We checked and there really is no tradeable liquidity
+      findings.push(finding(
+        "No tradeable liquidity on indexed DEXes",
+        "bad",
+        "Token may not yet be listed on any major DEX",
+      ));
+      topConcerns.push("no tradeable liquidity");
       riskScore += 3;
+    } else {
+      // Data genuinely unavailable — emit neutral info, don't penalize
+      findings.push(finding(
+        "Liquidity data unavailable",
+        "info",
+        liquidityInfo.message || "DexScreener has not yet indexed this token",
+      ));
     }
 
     /* ── Holder layer ── */
-    findings.push(finding(`Top holder controls ${holderRisk.topHolderPercent}%`, "info"));
-    if (holderRisk.risky && !isStablecoin) {
-      findings.push(finding("High holder concentration risk", "bad", holderRisk.message));
-      topConcerns.push("whale concentration");
-      riskScore += 3;
+    if (holderRisk.dataAvailable) {
+      findings.push(finding(
+        `Top holder controls ${holderRisk.topHolderPercent}%`,
+        holderRisk.topHolderPercent >= 50 ? "bad" : holderRisk.topHolderPercent >= 25 ? "warn" : "info",
+      ));
+      if (holderRisk.risky && !isStablecoin) {
+        findings.push(finding("High holder concentration risk", "bad", holderRisk.message));
+        topConcerns.push("whale concentration");
+        riskScore += 3;
+      } else if (!holderRisk.risky) {
+        findings.push(finding(holderRisk.message, "good"));
+      }
     } else {
-      findings.push(finding("Healthy holder distribution", "good"));
+      // Single clean finding when the explorer has no holder index for this chain
+      findings.push(finding(
+        "Holder distribution data unavailable",
+        "info",
+        "Block explorer does not index top holders for this chain",
+      ));
     }
 
     /* ── Liquidity lock layer ── */
     if (!isStablecoin) {
-      for (const f of liquidityLock.findings) {
-        findings.push(finding(f, liquidityLock.risky ? "warn" : "good"));
+      if (liquidityLock.dataAvailable) {
+        for (const f of liquidityLock.findings) {
+          findings.push(finding(f, liquidityLock.risky ? "warn" : "good"));
+        }
+        if (liquidityLock.risky) {
+          topConcerns.push("liquidity not locked");
+          riskScore += 3;
+        }
       }
-      if (liquidityLock.risky) {
-        topConcerns.push("liquidity not locked");
-        riskScore += 3;
-      }
+      // If data unavailable, skip silently — the bytecode analyzer
+      // already covers "verified vs unverified source"
     } else {
       findings.push(finding("Institutional Liquidity Architecture", "good"));
     }
 
     /* ── Wallet trap layer ── */
-    for (const f of walletTrap.findings) {
-      findings.push(finding(f, walletTrap.risky ? "warn" : "good"));
-    }
-    if (walletTrap.risky && !isStablecoin) {
-      findings.push(finding("Suspicious wallet trap behavior", "bad"));
-      riskScore += 2;
+    // Only emit wallet trap findings if we have holder data.
+    // Otherwise the bytecode analyzer already covers dangerous patterns.
+    if (walletTrap.dataAvailable) {
+      for (const f of walletTrap.findings) {
+        findings.push(finding(f, walletTrap.risky ? "warn" : "good"));
+      }
+      if (walletTrap.risky && !isStablecoin) {
+        findings.push(finding("Suspicious wallet trap behavior", "bad"));
+        riskScore += 2;
+      }
     }
 
     /* ── Bytecode-level analysis (authoritative, replaces keyword matching) ── */

@@ -8,6 +8,7 @@ import MetricCards from "./MetricCards";
 import RiskDonut from "./RiskDonut";
 import SecurityRadar from "./SecurityRadar";
 import FindingsList from "./FindingsList";
+import PremiumUnlock from "./PremiumUnlock";
 
 export default function AuditReportView({
   report,
@@ -87,6 +88,8 @@ export default function AuditReportView({
       </div>
 
       <FindingsList report={report} />
+
+      <PremiumUnlock report={report} />
 
       {/* Footer meta */}
       <div className="card p-7 anim-fade-up">
