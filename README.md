@@ -133,3 +133,4 @@ The aesthetic is intentionally **editorial / intelligence-magazine** rather than
 ## Security note
 
 If you forked this repo from the original zip, the previous `.env.local` contained a live API key. Rotate it at <https://etherscan.io/myapikey> before deploying anywhere public.
+
