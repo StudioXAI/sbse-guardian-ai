@@ -3,12 +3,9 @@
 import type { AuditReport, Finding } from "@/lib/types";
 
 /**
- * Risk Composition donut — Batch 4 polish:
- * - Much stronger text contrast on center label (was hard to read)
- * - Bigger "TOTAL" typography
- * - Brighter segment colors
- * - Animated segment fade-in + rotation
- * - Percentage label on the dominant segment
+ * Risk Composition donut — Batch 5A fix:
+ * Big TOTAL number now scales based on digit count so multi-digit
+ * numbers don't overflow the inner hole of the donut.
  */
 export default function RiskDonut({ report }: { report: AuditReport }) {
   const bad = report.findings.filter((f) => f.severity === "bad").length;
@@ -56,13 +53,17 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
     segments[0] || allSegments[3],
   );
 
+  // Responsive TOTAL font size — prevents overflow when total has many digits
+  const totalDigits = String(total).length;
+  const totalFontSize = totalDigits >= 4 ? 40 : totalDigits === 3 ? 48 : 58;
+
   return (
     <section
       className="card card-hover relative overflow-hidden anim-fade-up"
       style={{ padding: "28px 32px" }}
       aria-labelledby="donut-title"
     >
-      {/* Ambient radial glow tuned to dominant finding */}
+      {/* Ambient radial glow */}
       <div
         aria-hidden
         className="absolute inset-0 pointer-events-none"
@@ -74,7 +75,6 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
         }}
       />
 
-      {/* Header */}
       <div className="relative flex items-baseline justify-between gap-4 mb-7">
         <h3
           id="donut-title"
@@ -89,7 +89,6 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
       </div>
 
       <div className="relative flex flex-col items-center gap-7">
-        {/* Donut */}
         <div
           className="relative"
           role="img"
@@ -122,7 +121,6 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
                   animation: `drawSegment 0.9s var(--ease) ${arc.delay}s both`,
                 }}
               >
-                {/* Soft blurred glow underneath */}
                 <circle
                   cx={cx}
                   cy={cy}
@@ -135,7 +133,6 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
                   opacity={0.22}
                   style={{ filter: "blur(6px)" }}
                 />
-                {/* Segment */}
                 <circle
                   cx={cx}
                   cy={cy}
@@ -151,7 +148,7 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
               </g>
             ))}
 
-            {/* Center labels — HIGH CONTRAST for visibility */}
+            {/* Center labels — clamp font size so we don't overflow */}
             <text
               x={cx}
               y={cy - 22}
@@ -166,10 +163,10 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
             </text>
             <text
               x={cx}
-              y={cy + 18}
+              y={cy + 14}
               textAnchor="middle"
               fill="#ffffff"
-              fontSize="56"
+              fontSize={totalFontSize}
               fontWeight="700"
               fontFamily="var(--font-sans)"
               style={{ letterSpacing: "-0.04em" }}
@@ -178,7 +175,7 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
             </text>
             <text
               x={cx}
-              y={cy + 40}
+              y={cy + 38}
               textAnchor="middle"
               fill={dominant?.color ?? "var(--fg-muted)"}
               fontSize="11"
@@ -194,7 +191,7 @@ export default function RiskDonut({ report }: { report: AuditReport }) {
           </svg>
         </div>
 
-        {/* Legend with mini bars */}
+        {/* Legend */}
         <ul className="w-full space-y-2" role="list">
           {allSegments.map((seg) => {
             const pct = (seg.value / total) * 100;

@@ -5,6 +5,7 @@ import type { AuditReport } from "@/lib/types";
 import VerdictCard from "./VerdictCard";
 import AiSummaryCard from "./AiSummaryCard";
 import MetricCards from "./MetricCards";
+import ProjectInfoCard from "./ProjectInfoCard";
 import RiskDonut from "./RiskDonut";
 import SecurityRadar from "./SecurityRadar";
 import FindingsList from "./FindingsList";
@@ -81,6 +82,8 @@ export default function AuditReportView({
       <AiSummaryCard report={report} />
 
       <MetricCards report={report} />
+
+      <ProjectInfoCard report={report} />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <RiskDonut report={report} />

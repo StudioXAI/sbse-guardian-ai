@@ -407,12 +407,16 @@ export async function POST(req: Request) {
             : "warn";
         findings.push(finding(`Top pair liquidity: ${liquidityInfo.liquidity}`, sev));
       }
-      // Total across all pairs — useful signal for overall tradeability
-      if (liquidityInfo.totalLiquidityFormatted && liquidityInfo.pairCount && liquidityInfo.pairCount > 1) {
+      // Total across all pairs — always show when available, even for single pair
+      if (liquidityInfo.totalLiquidityFormatted && liquidityInfo.pairCount) {
+        const aggDetail =
+          liquidityInfo.pairCount > 1
+            ? `Aggregated across ${liquidityInfo.pairCount} indexed pairs`
+            : `Single pair on ${liquidityInfo.dex || "indexed DEX"}`;
         findings.push(finding(
           `Total liquidity: ${liquidityInfo.totalLiquidityFormatted}`,
           "info",
-          `Aggregated across ${liquidityInfo.pairCount} indexed pairs`,
+          aggDetail,
         ));
       }
       if (liquidityInfo.volume24h) {

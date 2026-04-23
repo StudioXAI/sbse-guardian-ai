@@ -48,6 +48,38 @@ const networks = [mainnet, bsc, polygon, base, arbitrum, optimism] as [
  */
 let appKitInitialized = false;
 
+/**
+ * Suppress specific noisy errors from third-party wallet injections
+ * that Reown AppKit probes during discovery.
+ * - Coinbase Wallet throws on `isDefaultWallet` method probe
+ * - We filter these to reduce console noise without hiding real errors
+ */
+function installConsoleFilters() {
+  if (typeof window === "undefined") return;
+  if ((window as any).__sbse_console_filtered) return;
+  (window as any).__sbse_console_filtered = true;
+
+  const originalError = console.error;
+  const noisyPatterns = [
+    /isDefaultWallet.*does not exist/i,
+    /The method "isDefaultWallet"/i,
+  ];
+
+  console.error = (...args: unknown[]) => {
+    const msg = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+    if (noisyPatterns.some((p) => p.test(msg))) return; // swallow
+    originalError.apply(console, args);
+  };
+
+  // Also catch uncaught rejections from wallet probes
+  window.addEventListener("unhandledrejection", (e) => {
+    const msg = String(e.reason?.message || e.reason || "");
+    if (noisyPatterns.some((p) => p.test(msg))) {
+      e.preventDefault();
+    }
+  });
+}
+
 function initAppKit() {
   if (appKitInitialized) return;
   if (!projectId) {
@@ -82,6 +114,7 @@ function initAppKit() {
 /** Provider is a no-op wrapper — initialization happens on module load. */
 export default function AppKitProvider({ children }: { children: ReactNode }) {
   if (typeof window !== "undefined") {
+    installConsoleFilters();
     initAppKit();
   }
   return <>{children}</>;

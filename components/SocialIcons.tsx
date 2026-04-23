@@ -2,8 +2,9 @@
 
 /* ─────────────────────────────────────────────────────────────
    Brand-accurate social platform icons as inline SVG.
-   Zero dependencies, no image loading flicker, always visible.
-   Colors match each platform's brand; caller can override via color prop.
+   Fix: coerce size prop to a positive integer at top of every icon
+   so width="" / height="" never leaks through. Prevents the
+   "unexpected end of attribute" console errors we saw.
    ───────────────────────────────────────────────────────────── */
 
 type IconProps = {
@@ -14,11 +15,21 @@ type IconProps = {
 
 const DEFAULT_SIZE = 14;
 
-export function TwitterIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+/**
+ * Coerce potentially-undefined size prop to a positive integer string.
+ * If NaN, null, or 0, falls back to default.
+ */
+function safeSize(v: number | undefined): number {
+  if (typeof v !== "number" || !Number.isFinite(v) || v <= 0) return DEFAULT_SIZE;
+  return Math.round(v);
+}
+
+export function TwitterIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill={color || "currentColor"}
       className={className}
@@ -29,11 +40,12 @@ export function TwitterIcon({ size = DEFAULT_SIZE, color, className }: IconProps
   );
 }
 
-export function TelegramIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+export function TelegramIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill={color || "#229ED9"}
       className={className}
@@ -44,11 +56,12 @@ export function TelegramIcon({ size = DEFAULT_SIZE, color, className }: IconProp
   );
 }
 
-export function DiscordIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+export function DiscordIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill={color || "#5865F2"}
       className={className}
@@ -59,11 +72,12 @@ export function DiscordIcon({ size = DEFAULT_SIZE, color, className }: IconProps
   );
 }
 
-export function GitHubIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+export function GitHubIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill={color || "currentColor"}
       className={className}
@@ -74,11 +88,12 @@ export function GitHubIcon({ size = DEFAULT_SIZE, color, className }: IconProps)
   );
 }
 
-export function MediumIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+export function MediumIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill={color || "currentColor"}
       className={className}
@@ -89,11 +104,12 @@ export function MediumIcon({ size = DEFAULT_SIZE, color, className }: IconProps)
   );
 }
 
-export function RedditIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+export function RedditIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill={color || "#FF4500"}
       className={className}
@@ -104,11 +120,12 @@ export function RedditIcon({ size = DEFAULT_SIZE, color, className }: IconProps)
   );
 }
 
-export function WebsiteIcon({ size = DEFAULT_SIZE, color, className }: IconProps) {
+export function WebsiteIcon({ size, color, className }: IconProps) {
+  const s = safeSize(size);
   return (
     <svg
-      width={size}
-      height={size}
+      width={s}
+      height={s}
       viewBox="0 0 24 24"
       fill="none"
       stroke={color || "currentColor"}
@@ -127,18 +144,22 @@ export function WebsiteIcon({ size = DEFAULT_SIZE, color, className }: IconProps
 
 /**
  * Detect which social platform a URL belongs to and return the matching icon.
- * Returns null for unknown URLs.
+ * Returns null for unknown URLs only when none of the known hosts match.
  */
 export function socialIconForUrl(
-  url: string,
-  size: number = DEFAULT_SIZE,
+  url: string | undefined | null,
+  size?: number,
 ): React.ReactNode | null {
+  if (!url || typeof url !== "string") return null;
   const u = url.toLowerCase();
-  if (u.includes("twitter.com") || u.includes("x.com")) return <TwitterIcon size={size} />;
-  if (u.includes("t.me") || u.includes("telegram")) return <TelegramIcon size={size} />;
-  if (u.includes("discord.com") || u.includes("discord.gg")) return <DiscordIcon size={size} />;
-  if (u.includes("github.com")) return <GitHubIcon size={size} />;
-  if (u.includes("medium.com")) return <MediumIcon size={size} />;
-  if (u.includes("reddit.com")) return <RedditIcon size={size} />;
-  return <WebsiteIcon size={size} />;
+  const s = safeSize(size);
+  if (u.includes("twitter.com") || u.includes("x.com")) return <TwitterIcon size={s} />;
+  if (u.includes("t.me") || u.includes("telegram")) return <TelegramIcon size={s} />;
+  if (u.includes("discord.com") || u.includes("discord.gg")) return <DiscordIcon size={s} />;
+  if (u.includes("github.com")) return <GitHubIcon size={s} />;
+  if (u.includes("medium.com")) return <MediumIcon size={s} />;
+  if (u.includes("reddit.com")) return <RedditIcon size={s} />;
+  // Any URL that didn't match a known social — return generic website icon
+  if (u.startsWith("http")) return <WebsiteIcon size={s} />;
+  return null;
 }
