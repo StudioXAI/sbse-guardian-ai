@@ -156,8 +156,8 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
         const usdtContract = new Contract(usdt.address, ERC20_ABI, provider);
 
         const [usdcRaw, usdtRaw] = await Promise.all([
-          usdcContract.balanceOf(address).catch(() => 0n),
-          usdtContract.balanceOf(address).catch(() => 0n),
+          usdcContract.balanceOf(address).catch(() => BigInt(0)),
+          usdtContract.balanceOf(address).catch(() => BigInt(0)),
         ]);
         if (cancelled) return;
 
