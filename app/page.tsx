@@ -110,14 +110,15 @@ export default function Home() {
         <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div
-              className="h-7 w-7 rounded-lg flex items-center justify-center"
+              className="h-7 w-7 rounded-lg flex items-center justify-center relative"
               style={{
-                background: "var(--amber)",
-                color: "var(--bg)",
+                background: "linear-gradient(135deg, var(--accent), var(--accent-soft))",
+                color: "#fff",
+                boxShadow: "0 0 16px rgba(108,99,255,0.35)",
               }}
               aria-hidden
             >
-              <span className="font-display italic text-base leading-none">S</span>
+              <span className="text-sm leading-none font-semibold">S</span>
             </div>
             <span className="font-mono text-sm tracking-[0.1em]" style={{ color: "var(--fg)" }}>
               SbSe <span style={{ color: "var(--fg-muted)" }}>Guardian</span>
@@ -128,11 +129,15 @@ export default function Home() {
             <span>Mainnet</span>
             <span
               className="inline-flex items-center gap-2"
-              style={{ color: "var(--green)" }}
+              style={{ color: "var(--success)" }}
             >
               <span
                 className="inline-block h-1.5 w-1.5 rounded-full"
-                style={{ background: "var(--green)", animation: "pulse 2s ease-in-out infinite" }}
+                style={{
+                  background: "var(--success)",
+                  boxShadow: "0 0 8px rgba(74,222,128,0.6), 0 0 14px rgba(74,222,128,0.3)",
+                  animation: "pulse 2s ease-in-out infinite",
+                }}
               />
               Online
             </span>
