@@ -668,6 +668,7 @@ function UnlockedState({
 
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfToast, setPdfToast] = useState<string | null>(null);
 
   const [email, setEmail] = useState("");
   const [watchlistState, setWatchlistState] = useState<
@@ -679,9 +680,27 @@ function UnlockedState({
     if (!walletAddress || !contractAddress || !chainId) return;
     setDownloadingPdf(true);
     setPdfError(null);
+    setPdfToast(null);
+
+    const pdfUrl = `/api/pdf?wallet=${walletAddress}&contract=${contractAddress}&chainId=${chainId}`;
+
+    // Detect mobile: iOS/iPadOS/Android — their download handling is unreliable
+    // via blob+link. Open in new tab instead so the native share sheet appears.
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(ua);
+
+    if (isMobile) {
+      // Open in new tab; browser's native viewer handles save/share.
+      window.open(pdfUrl, "_blank", "noopener,noreferrer");
+      setDownloadingPdf(false);
+      setPdfToast("Opening report in new tab. Use your browser's share/save menu.");
+      setTimeout(() => setPdfToast(null), 6000);
+      return;
+    }
+
+    // Desktop: fetch + blob + programmatic download, then show toast.
     try {
-      const url = `/api/pdf?wallet=${walletAddress}&contract=${contractAddress}&chainId=${chainId}`;
-      const res = await fetch(url);
+      const res = await fetch(pdfUrl);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(data?.error || `Download failed (${res.status})`);
@@ -689,14 +708,16 @@ function UnlockedState({
       const blob = await res.blob();
       const link = document.createElement("a");
       link.href = URL.createObjectURL(blob);
-      // Filename from Content-Disposition header if present
       const cd = res.headers.get("Content-Disposition") || "";
       const match = cd.match(/filename="([^"]+)"/);
-      link.download = match ? match[1] : `sbse-guardian-report.pdf`;
+      const filename = match ? match[1] : "sbse-guardian-report.pdf";
+      link.download = filename;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(link.href);
+      setPdfToast(`Report saved: ${filename}`);
+      setTimeout(() => setPdfToast(null), 6000);
     } catch (e: any) {
       setPdfError(e?.message || "PDF download failed");
     } finally {
@@ -804,6 +825,19 @@ function UnlockedState({
             {pdfError}
           </p>
         )}
+        {pdfToast && (
+          <div
+            className="mt-2 text-xs px-3 py-2 rounded-md inline-block"
+            role="status"
+            style={{
+              background: "rgba(74,222,128,0.1)",
+              border: "1px solid rgba(74,222,128,0.3)",
+              color: "var(--success)",
+            }}
+          >
+            ✓ {pdfToast}
+          </div>
+        )}
       </div>
 
       {/* Watchlist */}
@@ -830,24 +864,28 @@ function UnlockedState({
             ✓ {watchlistMsg}
           </div>
         ) : (
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex flex-col sm:flex-row gap-2 sm:flex-wrap">
             <input
               type="email"
+              inputMode="email"
+              autoComplete="email"
+              enterKeyHint="done"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
-              className="flex-1 min-w-[200px] px-3 py-2 rounded-md text-sm font-mono"
+              className="flex-1 min-w-0 sm:min-w-[200px] px-3 py-2 rounded-md font-mono"
               style={{
                 background: "var(--bg-elevated)",
                 border: "1px solid var(--border)",
                 color: "var(--fg)",
+                fontSize: "16px",
               }}
             />
             <button
               type="button"
               onClick={addToWatchlist}
               disabled={!email || watchlistState === "submitting"}
-              className="px-4 py-2 rounded-md text-sm font-medium transition hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed"
+              className="px-4 py-2 rounded-md text-sm font-medium transition hover:brightness-110 disabled:opacity-60 disabled:cursor-not-allowed w-full sm:w-auto"
               style={{
                 background: "var(--bg-elevated)",
                 color: "var(--fg)",
