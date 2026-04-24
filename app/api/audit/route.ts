@@ -424,18 +424,32 @@ export async function POST(req: Request) {
         findings.push(finding(`24h Volume: ${liquidityInfo.volume24h}`, "info"));
       }
       if (liquidityInfo.source) {
-        findings.push(finding(
-          `Liquidity source: ${
-            liquidityInfo.source === "dexscreener"
+        const primaryName =
+          liquidityInfo.source === "dexscreener"
+            ? "DexScreener"
+            : liquidityInfo.source === "geckoterminal"
+            ? "GeckoTerminal"
+            : liquidityInfo.source === "source-code"
+            ? "On-chain contract detection"
+            : "Verified";
+        findings.push(finding(`Liquidity source: ${primaryName}`, "info"));
+
+        // "Where is bigger" — if both aggregators returned data, show
+        // the runner-up's numbers so user can see the comparison.
+        if (liquidityInfo.alternateSource && liquidityInfo.alternateTotalLiquidityFormatted) {
+          const altName =
+            liquidityInfo.alternateSource === "dexscreener"
               ? "DexScreener"
-              : liquidityInfo.source === "geckoterminal"
-              ? "GeckoTerminal"
-              : liquidityInfo.source === "source-code"
-              ? "On-chain contract detection"
-              : "Verified"
-          }`,
-          "info",
-        ));
+              : "GeckoTerminal";
+          const altDetail = liquidityInfo.alternatePairCount
+            ? `${liquidityInfo.alternateTotalLiquidityFormatted} across ${liquidityInfo.alternatePairCount} pairs`
+            : liquidityInfo.alternateTotalLiquidityFormatted;
+          findings.push(finding(
+            `Also indexed on ${altName}: ${altDetail}`,
+            "info",
+            `Primary uses ${primaryName} (higher total). Cross-checked against ${altName}.`,
+          ));
+        }
       }
     } else if (liquidityInfo.dataAvailable) {
       findings.push(finding(

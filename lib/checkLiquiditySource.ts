@@ -1,14 +1,17 @@
 /* ─────────────────────────────────────────────────────────────
-   Liquidity Source Analysis — Batch 4 enhanced
+   Liquidity Source Analysis — Batch 5H: parallel-merge
 
-   Now:
-   1. DexScreener first — aggregates total USD liquidity across ALL
-      pairs on the target chain (not just top).
-   2. GeckoTerminal fallback if DexScreener has nothing.
-   3. Source-code keywords as last resort.
+   Instead of DexScreener-first with GeckoTerminal as fallback,
+   query BOTH in parallel and pick whichever returns the higher
+   total USD liquidity. Keep the runner-up in alternate* fields.
 
-   Returns both the top pair AND the aggregate totals so the UI can
-   show "Total: $X across N pairs" as a finding.
+   Design rationale:
+   - DexScreener and GeckoTerminal index overlapping-but-different
+     pool sets. Picking the larger aggregate biases toward
+     completeness of coverage.
+   - Neither source is perfect; showing both gives the user
+     visibility into the data we actually have.
+   - Source-code keyword match stays as third-tier fallback.
    ───────────────────────────────────────────────────────────── */
 
 import { isInstitutional, debug } from "./constants";
@@ -21,7 +24,6 @@ export interface LiquiditySourceResult {
   pairAddress?: string;
   liquidity?: string;
   liquidityUsd?: number;
-  /** Total liquidity across all pairs (not just the top one). */
   totalLiquidityUsd?: number;
   totalLiquidityFormatted?: string;
   pairCount?: number;
@@ -30,6 +32,13 @@ export interface LiquiditySourceResult {
   institutional: boolean;
   message?: string;
   source?: "dexscreener" | "geckoterminal" | "source-code" | "institutional";
+
+  /** Runner-up source when both aggregators returned data. */
+  alternateSource?: "dexscreener" | "geckoterminal";
+  alternateTotalLiquidityUsd?: number;
+  alternateTotalLiquidityFormatted?: string;
+  alternatePairCount?: number;
+  alternateVolume24hFormatted?: string;
 }
 
 const LIQUIDITY_KEYWORDS = [
@@ -41,7 +50,6 @@ const LIQUIDITY_KEYWORDS = [
   "swapexact",
 ];
 
-/** Map our chainName to DexScreener's chain key. */
 const DEXSCREENER_CHAIN_MAP: Record<string, string> = {
   "ethereum": "ethereum",
   "bnb smart chain": "bsc",
@@ -51,6 +59,16 @@ const DEXSCREENER_CHAIN_MAP: Record<string, string> = {
   "op mainnet": "optimism",
   "avalanche": "avalanche",
   "fantom": "fantom",
+};
+
+const GECKO_NETWORK_MAP: Record<string, string> = {
+  "ethereum": "eth",
+  "bnb smart chain": "bsc",
+  "polygon": "polygon_pos",
+  "base": "base",
+  "arbitrum one": "arbitrum",
+  "op mainnet": "optimism",
+  "avalanche": "avax",
 };
 
 function fmtUsd(n: number): string {
@@ -71,15 +89,14 @@ async function tryDexScreener(
     const allPairs: any[] = dexData?.pairs || [];
     if (!allPairs.length) return null;
 
-    // Filter to current chain when we have a mapping
     const targetChain = DEXSCREENER_CHAIN_MAP[chain.chainName?.toLowerCase() || ""];
     const chainPairs = targetChain
       ? allPairs.filter((p) => String(p?.chainId || "").toLowerCase() === targetChain)
       : allPairs;
 
     const pairs = chainPairs.length ? chainPairs : allPairs;
+    if (!pairs.length) return null;
 
-    // Aggregate totals across all pairs on this chain
     let totalLiquidityUsd = 0;
     let totalVolume24h = 0;
     for (const p of pairs) {
@@ -87,16 +104,15 @@ async function tryDexScreener(
       if (p?.volume?.h24) totalVolume24h += Number(p.volume.h24);
     }
 
-    // Pick the biggest pair as the "primary"
     pairs.sort((a, b) => (b.liquidity?.usd || 0) - (a.liquidity?.usd || 0));
     const main = pairs[0];
-    const primaryLiquidityUsd = main.liquidity?.usd;
+    const primaryLiquidityUsd = main?.liquidity?.usd;
 
     return {
       dataAvailable: true,
       found: true,
-      dex: main.dexId || "Verified On-Chain Liquidity",
-      pairAddress: main.pairAddress || undefined,
+      dex: main?.dexId || "Verified On-Chain Liquidity",
+      pairAddress: main?.pairAddress || undefined,
       liquidity: primaryLiquidityUsd
         ? fmtUsd(primaryLiquidityUsd)
         : "Blockchain Verified",
@@ -109,8 +125,8 @@ async function tryDexScreener(
       institutional: false,
       source: "dexscreener",
     };
-  } catch (e) {
-    debug("DexScreener lookup failed:", e);
+  } catch (e: any) {
+    console.warn("DexScreener liquidity lookup failed:", e?.message || e);
     return null;
   }
 }
@@ -119,17 +135,7 @@ async function tryGeckoTerminal(
   contractAddress: string,
   chain: ChainInfo,
 ): Promise<LiquiditySourceResult | null> {
-  // GeckoTerminal network slugs
-  const networkMap: Record<string, string> = {
-    "ethereum": "eth",
-    "bnb smart chain": "bsc",
-    "polygon": "polygon_pos",
-    "base": "base",
-    "arbitrum one": "arbitrum",
-    "op mainnet": "optimism",
-    "avalanche": "avax",
-  };
-  const network = networkMap[chain.chainName?.toLowerCase() || ""];
+  const network = GECKO_NETWORK_MAP[chain.chainName?.toLowerCase() || ""];
   if (!network) return null;
 
   try {
@@ -172,10 +178,27 @@ async function tryGeckoTerminal(
       institutional: false,
       source: "geckoterminal",
     };
-  } catch (e) {
-    debug("GeckoTerminal lookup failed:", e);
+  } catch (e: any) {
+    console.warn("GeckoTerminal liquidity lookup failed:", e?.message || e);
     return null;
   }
+}
+
+function mergeSources(
+  a: LiquiditySourceResult,
+  b: LiquiditySourceResult,
+): LiquiditySourceResult {
+  const aTotal = a.totalLiquidityUsd || 0;
+  const bTotal = b.totalLiquidityUsd || 0;
+  const [primary, secondary] = aTotal >= bTotal ? [a, b] : [b, a];
+  return {
+    ...primary,
+    alternateSource: secondary.source as "dexscreener" | "geckoterminal",
+    alternateTotalLiquidityUsd: secondary.totalLiquidityUsd,
+    alternateTotalLiquidityFormatted: secondary.totalLiquidityFormatted,
+    alternatePairCount: secondary.pairCount,
+    alternateVolume24hFormatted: secondary.volume24h,
+  };
 }
 
 export async function checkLiquiditySource(
@@ -196,15 +219,15 @@ export async function checkLiquiditySource(
     };
   }
 
-  // Step 1: Try DexScreener
-  const dex = await tryDexScreener(contractAddress, chain);
-  if (dex) return dex;
+  const [dex, gecko] = await Promise.all([
+    tryDexScreener(contractAddress, chain),
+    tryGeckoTerminal(contractAddress, chain),
+  ]);
 
-  // Step 2: Fallback to GeckoTerminal
-  const gecko = await tryGeckoTerminal(contractAddress, chain);
+  if (dex && gecko) return mergeSources(dex, gecko);
+  if (dex) return dex;
   if (gecko) return gecko;
 
-  // Step 3: Last resort — source-code keyword match
   try {
     const url = explorerUrl(chain, {
       module: "contract",
@@ -232,7 +255,7 @@ export async function checkLiquiditySource(
         dataAvailable: true,
         found: true,
         dex: "On-chain liquidity logic detected",
-        liquidity: "Not yet indexed by DexScreener",
+        liquidity: "Not yet indexed by DexScreener or GeckoTerminal",
         volume24h: "Pair data pending",
         institutional: false,
         source: "source-code",
@@ -245,8 +268,8 @@ export async function checkLiquiditySource(
       institutional: false,
       message: "No tradeable liquidity found on indexed DEXes",
     };
-  } catch (error) {
-    debug("Liquidity source fallback failed:", error);
+  } catch (error: any) {
+    console.warn("Liquidity source fallback failed:", error?.message || error);
     return {
       dataAvailable: false,
       found: false,
