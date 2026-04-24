@@ -391,6 +391,45 @@ export async function POST(req: Request) {
       ));
     }
 
+    /* ── Fetch CoinGecko enrichment (primary data source) ── */
+    let enrichment = null;
+    try {
+      const cg = await lookupTokenByContract(contractAddress, chain.chainName);
+      if (cg) {
+        enrichment = {
+          currentPriceUsd: cg.currentPriceUsd,
+          priceChange24hPct: cg.priceChange24hPct,
+          marketCapUsd: cg.marketCapUsd,
+          volume24hUsd: cg.volume24hUsd,
+          platforms: cg.platforms,
+          coinGeckoId: cg.coinGeckoId,
+          description: cg.description,
+        };
+        // Let CoinGecko overwrite weaker DexScreener market cap if stronger
+        if (cg.marketCapUsd && cg.marketCapUsd > 0) {
+          report.marketCap = formatCompactUsd(cg.marketCapUsd);
+        }
+        // Fill in socials from CoinGecko if DexScreener missed any
+        if (cg.twitter && !report.socials?.twitter) {
+          report.socials = { ...(report.socials || {}), twitter: cg.twitter };
+        }
+        if (cg.telegram && !report.socials?.telegram) {
+          report.socials = { ...(report.socials || {}), telegram: cg.telegram };
+        }
+        if (cg.reddit && !report.socials?.reddit) {
+          report.socials = { ...(report.socials || {}), reddit: cg.reddit };
+        }
+        if (cg.github && !report.socials?.github) {
+          report.socials = { ...(report.socials || {}), github: cg.github };
+        }
+        if (cg.homepage && !report.website) {
+          report.website = cg.homepage;
+        }
+      }
+    } catch (e) {
+      debug("CoinGecko enrichment failed:", e);
+    }
+
     /* ── Liquidity layer ── */
     if (isStablecoin || isBluechip) {
       findings.push(finding("Institutional Liquidity Infrastructure", "good"));
@@ -420,8 +459,37 @@ export async function POST(req: Request) {
           aggDetail,
         ));
       }
-      if (liquidityInfo.volume24h) {
-        findings.push(finding(`24h Volume: ${liquidityInfo.volume24h}`, "info"));
+      // 24h volume: compare aggregator (DexScreener/GeckoTerminal after 5H merge)
+      // vs CoinGecko. Display the higher number as primary, add a secondary
+      // finding showing the other source for transparency.
+      const aggVolumeUsd = liquidityInfo.volume24hUsd;
+      const cgVolumeUsd = enrichment?.volume24hUsd;
+      const aggSourceLabel =
+        liquidityInfo.source === "geckoterminal" ? "GeckoTerminal" : "DexScreener";
+
+      if (aggVolumeUsd != null && cgVolumeUsd != null) {
+        // Both sources returned data — show higher as primary, other as comparison
+        const [primaryUsd, primaryLabel, secondaryUsd, secondaryLabel] =
+          aggVolumeUsd >= cgVolumeUsd
+            ? [aggVolumeUsd, aggSourceLabel, cgVolumeUsd, "CoinGecko"]
+            : [cgVolumeUsd, "CoinGecko", aggVolumeUsd, aggSourceLabel];
+        findings.push(finding(
+          `24h Volume: $${Math.round(primaryUsd).toLocaleString()}`,
+          "info",
+          `Source: ${primaryLabel} (higher of two). Also reported by ${secondaryLabel}: $${Math.round(secondaryUsd).toLocaleString()}.`,
+        ));
+      } else if (cgVolumeUsd != null) {
+        findings.push(finding(
+          `24h Volume: $${Math.round(cgVolumeUsd).toLocaleString()}`,
+          "info",
+          "Source: CoinGecko",
+        ));
+      } else if (liquidityInfo.volume24h) {
+        findings.push(finding(
+          `24h Volume: ${liquidityInfo.volume24h}`,
+          "info",
+          `Source: ${aggSourceLabel}`,
+        ));
       }
       if (liquidityInfo.source) {
         const primaryName =
@@ -669,44 +737,6 @@ export async function POST(req: Request) {
       aiSummary: null,
     };
 
-    /* ── Fetch CoinGecko enrichment (primary data source) ── */
-    let enrichment = null;
-    try {
-      const cg = await lookupTokenByContract(contractAddress, chain.chainName);
-      if (cg) {
-        enrichment = {
-          currentPriceUsd: cg.currentPriceUsd,
-          priceChange24hPct: cg.priceChange24hPct,
-          marketCapUsd: cg.marketCapUsd,
-          volume24hUsd: cg.volume24hUsd,
-          platforms: cg.platforms,
-          coinGeckoId: cg.coinGeckoId,
-          description: cg.description,
-        };
-        // Let CoinGecko overwrite weaker DexScreener market cap if stronger
-        if (cg.marketCapUsd && cg.marketCapUsd > 0) {
-          report.marketCap = formatCompactUsd(cg.marketCapUsd);
-        }
-        // Fill in socials from CoinGecko if DexScreener missed any
-        if (cg.twitter && !report.socials?.twitter) {
-          report.socials = { ...(report.socials || {}), twitter: cg.twitter };
-        }
-        if (cg.telegram && !report.socials?.telegram) {
-          report.socials = { ...(report.socials || {}), telegram: cg.telegram };
-        }
-        if (cg.reddit && !report.socials?.reddit) {
-          report.socials = { ...(report.socials || {}), reddit: cg.reddit };
-        }
-        if (cg.github && !report.socials?.github) {
-          report.socials = { ...(report.socials || {}), github: cg.github };
-        }
-        if (cg.homepage && !report.website) {
-          report.website = cg.homepage;
-        }
-      }
-    } catch (e) {
-      debug("CoinGecko enrichment failed:", e);
-    }
 
     /* ── Generate AI summary (non-blocking — null if API key missing or call fails) ── */
     try {
