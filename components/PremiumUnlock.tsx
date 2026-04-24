@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { BrowserProvider, Contract, parseUnits, formatUnits } from "ethers";
+import { BrowserProvider, JsonRpcProvider, Contract, parseUnits, formatUnits } from "ethers";
 import {
   useAppKit,
   useAppKitAccount,
@@ -32,6 +32,7 @@ interface ChainCfg {
   name: string;
   short: string;
   tokens: TokenCfg[];
+  rpcs: string[];
 }
 
 /** Verified addresses — match lib/verifyPayment.ts */
@@ -42,12 +43,24 @@ const CHAINS: ChainCfg[] = [
       { symbol: "USDC", address: "0xA0b86991c6218b36c1D19D4a2e9Eb0cE3606eB48", decimals: 6 },
       { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
     ],
+    rpcs: [
+      "https://ethereum.publicnode.com",
+      "https://cloudflare-eth.com",
+      "https://eth.llamarpc.com",
+      "https://rpc.ankr.com/eth",
+    ],
   },
   {
     id: 56, name: "BSC", short: "BSC",
     tokens: [
       { symbol: "USDC", address: "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d", decimals: 18 },
       { symbol: "USDT", address: "0x55d398326f99059fF775485246999027B3197955", decimals: 18 },
+    ],
+    rpcs: [
+      "https://bsc-dataseed.binance.org",
+      "https://bsc-dataseed1.defibit.io",
+      "https://bsc.publicnode.com",
+      "https://bsc-rpc.publicnode.com",
     ],
   },
   {
@@ -56,12 +69,24 @@ const CHAINS: ChainCfg[] = [
       { symbol: "USDC", address: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", decimals: 6 },
       { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
     ],
+    rpcs: [
+      "https://polygon-bor.publicnode.com",
+      "https://polygon-rpc.com",
+      "https://polygon.llamarpc.com",
+      "https://rpc.ankr.com/polygon",
+    ],
   },
   {
     id: 8453, name: "Base", short: "BASE",
     tokens: [
       { symbol: "USDC", address: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", decimals: 6 },
       { symbol: "USDT", address: "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2", decimals: 6 },
+    ],
+    rpcs: [
+      "https://mainnet.base.org",
+      "https://base.publicnode.com",
+      "https://base.llamarpc.com",
+      "https://rpc.ankr.com/base",
     ],
   },
   {
@@ -70,12 +95,24 @@ const CHAINS: ChainCfg[] = [
       { symbol: "USDC", address: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831", decimals: 6 },
       { symbol: "USDT", address: "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9", decimals: 6 },
     ],
+    rpcs: [
+      "https://arb1.arbitrum.io/rpc",
+      "https://arbitrum-one.publicnode.com",
+      "https://arbitrum.llamarpc.com",
+      "https://rpc.ankr.com/arbitrum",
+    ],
   },
   {
     id: 10, name: "Optimism", short: "OP",
     tokens: [
       { symbol: "USDC", address: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85", decimals: 6 },
       { symbol: "USDT", address: "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58", decimals: 6 },
+    ],
+    rpcs: [
+      "https://mainnet.optimism.io",
+      "https://optimism.publicnode.com",
+      "https://optimism.llamarpc.com",
+      "https://rpc.ankr.com/optimism",
     ],
   },
 ];
@@ -151,20 +188,36 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
       setStatus("checking_balance");
       setBalanceChecked(false);
       try {
-        const provider = new BrowserProvider(walletProvider);
         const [usdc, usdt] = currentChain.tokens;
-        const usdcContract = new Contract(usdc.address, ERC20_ABI, provider);
-        const usdtContract = new Contract(usdt.address, ERC20_ABI, provider);
+
+        // Read balances via public RPCs directly with fallback loop.
+        // walletProvider via WalletConnect mobile is unreliable for read calls.
+        const rpcList = currentChain.rpcs;
+        async function readErc20Balance(tokenAddr: string): Promise<bigint> {
+          for (const rpcUrl of rpcList) {
+            try {
+              const provider = new JsonRpcProvider(rpcUrl, currentChain!.id, {
+                staticNetwork: true,
+              });
+              const contract = new Contract(tokenAddr, ERC20_ABI, provider);
+              const bal = (await contract.balanceOf(address)) as bigint;
+              return bal;
+            } catch {
+              // try next RPC
+            }
+          }
+          return BigInt(0);
+        }
 
         const [usdcRaw, usdtRaw] = await Promise.all([
-          usdcContract.balanceOf(address).catch(() => BigInt(0)),
-          usdtContract.balanceOf(address).catch(() => BigInt(0)),
+          readErc20Balance(usdc.address),
+          readErc20Balance(usdt.address),
         ]);
         if (cancelled) return;
 
         setBalances({
-          USDC: Number(formatUnits(usdcRaw as bigint, usdc.decimals)),
-          USDT: Number(formatUnits(usdtRaw as bigint, usdt.decimals)),
+          USDC: Number(formatUnits(usdcRaw, usdc.decimals)),
+          USDT: Number(formatUnits(usdtRaw, usdt.decimals)),
         });
         setBalanceChecked(true);
         setStatus("idle");
