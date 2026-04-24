@@ -180,7 +180,7 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
   useEffect(() => {
     let cancelled = false;
     async function check() {
-      if (!isConnected || !address || !walletProvider || !currentChain) {
+      if (!isConnected || !address || !currentChain) {
         setBalances({ USDC: 0, USDT: 0 });
         setBalanceChecked(false);
         return;
