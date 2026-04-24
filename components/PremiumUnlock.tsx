@@ -403,7 +403,12 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
             boxShadow: "0 0 20px rgba(108,99,255,0.4)",
           }}
         >
-          ∞
+          <img
+            src="/logo.png"
+            alt="SbSe Guardian"
+            className="h-8 w-8 object-contain"
+            style={{ filter: "drop-shadow(0 0 4px rgba(255,255,255,0.2))" }}
+          />
         </div>
         <span className="label-sm" style={{ color: "var(--accent-soft)" }}>
           Premium Analysis
