@@ -265,7 +265,7 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
     try {
       const provider = new BrowserProvider(walletProvider);
       const signer = await provider.getSigner();
-      const token = new Contract(paymentToken.address, ERC20_ABI, signer);
+      const token = new Contract(paymentToken.address.toLowerCase(), ERC20_ABI, signer);
       const amount = parseUnits(String(PRICE), paymentToken.decimals);
 
       const tx = await token.transfer(RECEIVER, amount);
