@@ -1,14 +1,15 @@
 /* ─────────────────────────────────────────────────────────────
-   Universal Chain Detection Engine
-   Strategy:
-   - Use Etherscan V2's `eth_getCode` proxy endpoint instead of
-     `getsourcecode`. `eth_getCode` returns only the deployed
-     bytecode length indicator — tiny response, uniform across
-     all chains regardless of source verification, and far less
-     likely to trigger 502s under burst load.
-   - Tiered scan: tier 1 (popular) first, then 2, then 3.
-   - Concurrency capped at 5 to stay under free-tier limits.
-   - First match wins; remaining probes are abandoned.
+   Universal Chain Detection Engine — Batch 5D fix
+
+   The old logic was a race: fire 5 probes in parallel, first hit wins.
+   This broke for tokens like SHIB: the SHIB address on Base has unrelated
+   bytecode (different contract), but Base's explorer responded faster
+   than Ethereum's, so the race picked Base as the winner.
+
+   New logic: probe all tier-1 chains in parallel, but pick the hit with
+   the LOWEST tier + lowest CHAIN_REGISTRY index. This means Ethereum
+   always beats Base when both have bytecode. Only fall through to tier 2
+   if nothing in tier 1 responded.
    ───────────────────────────────────────────────────────────── */
 
 import {
@@ -23,7 +24,6 @@ export interface DetectedChain extends ChainInfo {
   found: boolean;
 }
 
-const MAX_CONCURRENCY = 5;
 const DEFAULT_RPC = "https://eth.llamarpc.com";
 
 function toChainInfo(chain: ChainEntry, scannerType: string): ChainInfo {
@@ -39,15 +39,10 @@ function toChainInfo(chain: ChainEntry, scannerType: string): ChainInfo {
   };
 }
 
-/**
- * Check if a contract exists on a specific chain using the
- * explorer's eth_getCode proxy endpoint. Returns ChainInfo on
- * match, null on miss, null on error.
- */
 async function probeExplorer(
   chain: ChainEntry,
   contractAddress: string,
-): Promise<ChainInfo | null> {
+): Promise<ChainEntry | null> {
   try {
     const apiKey = getExplorerApiKey(chain);
     if (!chain.explorerApi) return null;
@@ -60,65 +55,59 @@ async function probeExplorer(
     const data = await fetchJson<{ result?: string; error?: unknown }>(url, 7_000);
     const code = data?.result;
 
-    // `0x` or short => no contract at this address on this chain.
-    // Any non-trivial bytecode => contract exists.
     if (!code || typeof code !== "string" || code.length < 4 || code === "0x") {
       return null;
     }
 
-    return toChainInfo(chain, "Explorer eth_getCode");
+    return chain;
   } catch {
     debug("Explorer probe failed:", chain.name);
     return null;
   }
 }
 
-/**
- * Concurrency-limited race.
- * Processes items in `items` order, up to `concurrency` in flight.
- * Resolves with the first non-null result; remaining probes are abandoned.
- */
-async function raceWithLimit<T>(
-  items: ChainEntry[],
-  probe: (c: ChainEntry) => Promise<T | null>,
-  concurrency: number,
-): Promise<T | null> {
-  const queue = [...items];
-  let winner: T | null = null;
-
-  async function worker(): Promise<void> {
-    while (queue.length > 0 && winner === null) {
-      const item = queue.shift();
-      if (!item) return;
-      const result = await probe(item);
-      if (result !== null && winner === null) {
-        winner = result;
-        return;
-      }
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => worker(),
+async function probeTier(
+  tierChains: ChainEntry[],
+  contractAddress: string,
+): Promise<ChainEntry[]> {
+  const results = await Promise.all(
+    tierChains.map((c) => probeExplorer(c, contractAddress)),
   );
-  await Promise.all(workers);
-  return winner;
+  return results.filter((r): r is ChainEntry => r !== null);
 }
 
 export async function detectChain(
   contractAddress: string,
 ): Promise<DetectedChain> {
-  /* Sort by tier so popular chains get checked first. */
-  const sorted = [...CHAIN_REGISTRY].sort((a, b) => a.tier - b.tier);
+  const tiers = new Map<number, ChainEntry[]>();
+  CHAIN_REGISTRY.forEach((chain) => {
+    if (!tiers.has(chain.tier)) tiers.set(chain.tier, []);
+    tiers.get(chain.tier)!.push(chain);
+  });
 
-  const hit = await raceWithLimit(
-    sorted,
-    (c) => probeExplorer(c, contractAddress),
-    MAX_CONCURRENCY,
-  );
+  const sortedTiers = [...tiers.keys()].sort((a, b) => a - b);
 
-  if (hit) return { ...hit, found: true };
+  for (const tier of sortedTiers) {
+    const tierChains = tiers.get(tier)!;
+    const hits = await probeTier(tierChains, contractAddress);
+    if (hits.length > 0) {
+      const winner = hits[0];
+      if (hits.length > 1) {
+        debug(
+          `Contract found on ${hits.length} chains in tier ${tier}: ${hits
+            .map((c) => c.name)
+            .join(", ")}. Picking ${winner.name} (highest priority).`,
+        );
+      }
+      return {
+        ...toChainInfo(winner, "Explorer eth_getCode"),
+        found: true,
+      };
+    }
+  }
 
-  return { ...toChainInfo(CHAIN_REGISTRY[0], "Fallback"), found: false };
+  return {
+    ...toChainInfo(CHAIN_REGISTRY[0], "Fallback"),
+    found: false,
+  };
 }
