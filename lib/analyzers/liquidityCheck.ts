@@ -33,7 +33,7 @@ export async function liquidityCheck(
       };
     }
 
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
     const code = await provider.getCode(tokenAddress);
     if (!code || code === "0x") {
       return { safe: false, risk: "HIGH", message: "Token contract not found", scoreImpact: 4 };

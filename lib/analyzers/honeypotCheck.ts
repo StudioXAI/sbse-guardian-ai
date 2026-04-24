@@ -43,7 +43,7 @@ export async function honeypotCheck(
       };
     }
 
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
     const code = await provider.getCode(tokenAddress);
     if (!code || code === "0x") {
       return { safe: false, risk: "HIGH", message: "No contract code found", scoreImpact: 4 };

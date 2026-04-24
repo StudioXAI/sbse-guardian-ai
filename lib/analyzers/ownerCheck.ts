@@ -27,7 +27,7 @@ export async function ownerCheck(
       };
     }
 
-    const provider = new ethers.JsonRpcProvider(rpcUrl);
+    const provider = new ethers.JsonRpcProvider(rpcUrl, undefined, { staticNetwork: true });
     const contract = new ethers.Contract(tokenAddress, OWNABLE_ABI, provider);
     const owner: string = await contract.owner();
 
