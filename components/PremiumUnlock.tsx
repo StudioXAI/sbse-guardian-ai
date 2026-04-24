@@ -164,17 +164,39 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
     [address],
   );
 
-  /** Which stablecoin to use for payment — whichever has enough balance. Prefer USDC. */
-  const paymentToken = useMemo<TokenCfg | null>(() => {
-    if (!currentChain) return null;
+  /** User-selected stablecoin. Null = not yet picked (auto-picks on balance load). */
+  const [selectedToken, setSelectedToken] = useState<"USDC" | "USDT" | null>(null);
+
+  /** Auto-pick selectedToken when balances first load, preferring token with enough balance. */
+  useEffect(() => {
+    if (!balanceChecked) return;
+    if (selectedToken !== null) return; // user already made a choice
     if (balances.USDC >= PRICE) {
-      return currentChain.tokens.find((t) => t.symbol === "USDC") || null;
+      setSelectedToken("USDC");
+    } else if (balances.USDT >= PRICE) {
+      setSelectedToken("USDT");
+    } else {
+      // Neither sufficient — default to USDC so toggle shows something picked
+      setSelectedToken("USDC");
     }
-    if (balances.USDT >= PRICE) {
-      return currentChain.tokens.find((t) => t.symbol === "USDT") || null;
-    }
-    return null;
-  }, [currentChain, balances]);
+  }, [balanceChecked, balances, selectedToken]);
+
+  /** Reset selectedToken when user switches chains or disconnects, so auto-pick re-runs. */
+  useEffect(() => {
+    setSelectedToken(null);
+  }, [chainId, address]);
+
+  /** The actual token config for the selectedToken symbol. */
+  const paymentToken = useMemo<TokenCfg | null>(() => {
+    if (!currentChain || !selectedToken) return null;
+    return currentChain.tokens.find((t) => t.symbol === selectedToken) || null;
+  }, [currentChain, selectedToken]);
+
+  /** Whether user has enough balance of the selected token to pay. */
+  const hasEnoughForSelected = useMemo<boolean>(() => {
+    if (!selectedToken) return false;
+    return balances[selectedToken] >= PRICE;
+  }, [balances, selectedToken]);
 
   /* ─── Balance check on chain/address change ─── */
   useEffect(() => {
@@ -253,6 +275,7 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
   /* ─── Pay action ─── */
   const pay = useCallback(async () => {
     if (!walletProvider || !address || !currentChain || !paymentToken) return;
+    if (!hasEnoughForSelected) return;
     if (isReceiverWallet) {
       setError("This wallet is the receiver. Connect a different wallet to pay.");
       setStatus("error");
@@ -513,6 +536,9 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
           balances={balances}
           balanceChecked={balanceChecked}
           paymentToken={paymentToken}
+          selectedToken={selectedToken}
+          setSelectedToken={setSelectedToken}
+          hasEnoughForSelected={hasEnoughForSelected}
           status={status}
           onPay={pay}
           payButtonLabel={payButtonLabel()}
@@ -558,6 +584,9 @@ function ConnectedFlow({
   balances,
   balanceChecked,
   paymentToken,
+  selectedToken,
+  setSelectedToken,
+  hasEnoughForSelected,
   status,
   onPay,
   payButtonLabel,
@@ -567,11 +596,14 @@ function ConnectedFlow({
   balances: Balances;
   balanceChecked: boolean;
   paymentToken: TokenCfg | null;
+  selectedToken: "USDC" | "USDT" | null;
+  setSelectedToken: (t: "USDC" | "USDT") => void;
+  hasEnoughForSelected: boolean;
   status: Status;
   onPay: () => void;
   payButtonLabel: string;
 }) {
-  const hasEnough = !!paymentToken;
+  const hasEnough = hasEnoughForSelected;
   const busy = ["sending", "confirming", "verifying", "checking_balance"].includes(status);
 
   return (
@@ -597,6 +629,40 @@ function ConnectedFlow({
         )}
       </div>
 
+      {balanceChecked && selectedToken && (
+        <div className="flex items-center gap-2 mb-4">
+          <span className="text-xs uppercase tracking-wider" style={{ color: "var(--fg-dim)" }}>
+            Pay with:
+          </span>
+          <div
+            className="inline-flex rounded-md overflow-hidden"
+            style={{ border: "1px solid var(--border)" }}
+            role="tablist"
+            aria-label="Select stablecoin"
+          >
+            {(["USDC", "USDT"] as const).map((sym) => {
+              const isActive = selectedToken === sym;
+              return (
+                <button
+                  key={sym}
+                  type="button"
+                  role="tab"
+                  aria-selected={isActive}
+                  onClick={() => setSelectedToken(sym)}
+                  className="px-3 py-1.5 text-xs font-mono font-medium transition"
+                  style={{
+                    background: isActive ? "var(--accent)" : "var(--bg-elevated)",
+                    color: isActive ? "#fff" : "var(--fg-muted)",
+                  }}
+                >
+                  {sym}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {!balanceChecked ? (
         <div className="text-xs" style={{ color: "var(--fg-dim)" }}>
           Reading balances…
@@ -611,11 +677,11 @@ function ConnectedFlow({
           }}
         >
           <p className="text-sm mb-2 font-medium">
-            Insufficient balance on {chainName}
+            Not enough {selectedToken} on {chainName}
           </p>
           <p className="text-xs" style={{ color: "var(--fg-muted)" }}>
             You have {balances.USDC.toFixed(2)} USDC and {balances.USDT.toFixed(2)} USDT.
-            Need {PRICE} of either. Switch chains above or bridge funds.
+            Need {PRICE} {selectedToken}. Switch token above, switch chains, or bridge funds.
           </p>
         </div>
       ) : (
