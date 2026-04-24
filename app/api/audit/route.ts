@@ -391,44 +391,9 @@ export async function POST(req: Request) {
       ));
     }
 
-    /* ── Fetch CoinGecko enrichment (primary data source) ── */
-    let enrichment = null;
-    try {
-      const cg = await lookupTokenByContract(contractAddress, chain.chainName);
-      if (cg) {
-        enrichment = {
-          currentPriceUsd: cg.currentPriceUsd,
-          priceChange24hPct: cg.priceChange24hPct,
-          marketCapUsd: cg.marketCapUsd,
-          volume24hUsd: cg.volume24hUsd,
-          platforms: cg.platforms,
-          coinGeckoId: cg.coinGeckoId,
-          description: cg.description,
-        };
-        // Let CoinGecko overwrite weaker DexScreener market cap if stronger
-        if (cg.marketCapUsd && cg.marketCapUsd > 0) {
-          report.marketCap = formatCompactUsd(cg.marketCapUsd);
-        }
-        // Fill in socials from CoinGecko if DexScreener missed any
-        if (cg.twitter && !report.socials?.twitter) {
-          report.socials = { ...(report.socials || {}), twitter: cg.twitter };
-        }
-        if (cg.telegram && !report.socials?.telegram) {
-          report.socials = { ...(report.socials || {}), telegram: cg.telegram };
-        }
-        if (cg.reddit && !report.socials?.reddit) {
-          report.socials = { ...(report.socials || {}), reddit: cg.reddit };
-        }
-        if (cg.github && !report.socials?.github) {
-          report.socials = { ...(report.socials || {}), github: cg.github };
-        }
-        if (cg.homepage && !report.website) {
-          report.website = cg.homepage;
-        }
-      }
-    } catch (e) {
-      debug("CoinGecko enrichment failed:", e);
-    }
+    /* ── CoinGecko lookup (read-only, for findings) — writes into report happen later ── */
+    const cgLookup = await lookupTokenByContract(contractAddress, chain.chainName)
+      .catch((e) => { debug("CoinGecko lookup failed:", e); return null; });
 
     /* ── Liquidity layer ── */
     if (isStablecoin || isBluechip) {
@@ -463,7 +428,7 @@ export async function POST(req: Request) {
       // vs CoinGecko. Display the higher number as primary, add a secondary
       // finding showing the other source for transparency.
       const aggVolumeUsd = liquidityInfo.volume24hUsd;
-      const cgVolumeUsd = enrichment?.volume24hUsd;
+      const cgVolumeUsd = cgLookup?.volume24hUsd;
       const aggSourceLabel =
         liquidityInfo.source === "geckoterminal" ? "GeckoTerminal" : "DexScreener";
 
@@ -737,6 +702,38 @@ export async function POST(req: Request) {
       aiSummary: null,
     };
 
+
+    /* ── Apply CoinGecko enrichment to built report (mutations) ── */
+    let enrichment = null;
+    if (cgLookup) {
+      enrichment = {
+        currentPriceUsd: cgLookup.currentPriceUsd,
+        priceChange24hPct: cgLookup.priceChange24hPct,
+        marketCapUsd: cgLookup.marketCapUsd,
+        volume24hUsd: cgLookup.volume24hUsd,
+        platforms: cgLookup.platforms,
+        coinGeckoId: cgLookup.coinGeckoId,
+        description: cgLookup.description,
+      };
+      if (cgLookup.marketCapUsd && cgLookup.marketCapUsd > 0) {
+        report.marketCap = formatCompactUsd(cgLookup.marketCapUsd);
+      }
+      if (cgLookup.twitter && !report.socials?.twitter) {
+        report.socials = { ...(report.socials || {}), twitter: cgLookup.twitter };
+      }
+      if (cgLookup.telegram && !report.socials?.telegram) {
+        report.socials = { ...(report.socials || {}), telegram: cgLookup.telegram };
+      }
+      if (cgLookup.reddit && !report.socials?.reddit) {
+        report.socials = { ...(report.socials || {}), reddit: cgLookup.reddit };
+      }
+      if (cgLookup.github && !report.socials?.github) {
+        report.socials = { ...(report.socials || {}), github: cgLookup.github };
+      }
+      if (cgLookup.homepage && !report.website) {
+        report.website = cgLookup.homepage;
+      }
+    }
 
     /* ── Generate AI summary (non-blocking — null if API key missing or call fails) ── */
     try {
