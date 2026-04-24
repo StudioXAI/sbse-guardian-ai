@@ -44,7 +44,7 @@ const CHAINS: ChainCfg[] = [
       { symbol: "USDT", address: "0xdAC17F958D2ee523a2206206994597C13D831ec7", decimals: 6 },
     ],
     rpcs: [
-      "https://ethereum.publicnode.com",
+      "https://ethereum-rpc.publicnode.com",
       "https://cloudflare-eth.com",
       "https://eth.llamarpc.com",
       "https://rpc.ankr.com/eth",
@@ -59,7 +59,7 @@ const CHAINS: ChainCfg[] = [
     rpcs: [
       "https://bsc-dataseed.binance.org",
       "https://bsc-dataseed1.defibit.io",
-      "https://bsc.publicnode.com",
+      "https://bsc-rpc.publicnode.com",
       "https://bsc-rpc.publicnode.com",
     ],
   },
@@ -70,7 +70,7 @@ const CHAINS: ChainCfg[] = [
       { symbol: "USDT", address: "0xc2132D05D31c914a87C6611C10748AEb04B58e8F", decimals: 6 },
     ],
     rpcs: [
-      "https://polygon-bor.publicnode.com",
+      "https://polygon-bor-rpc.publicnode.com",
       "https://polygon-rpc.com",
       "https://polygon.llamarpc.com",
       "https://rpc.ankr.com/polygon",
@@ -84,7 +84,7 @@ const CHAINS: ChainCfg[] = [
     ],
     rpcs: [
       "https://mainnet.base.org",
-      "https://base.publicnode.com",
+      "https://base-rpc.publicnode.com",
       "https://base.llamarpc.com",
       "https://rpc.ankr.com/base",
     ],
@@ -97,7 +97,7 @@ const CHAINS: ChainCfg[] = [
     ],
     rpcs: [
       "https://arb1.arbitrum.io/rpc",
-      "https://arbitrum-one.publicnode.com",
+      "https://arbitrum-one-rpc.publicnode.com",
       "https://arbitrum.llamarpc.com",
       "https://rpc.ankr.com/arbitrum",
     ],
@@ -110,7 +110,7 @@ const CHAINS: ChainCfg[] = [
     ],
     rpcs: [
       "https://mainnet.optimism.io",
-      "https://optimism.publicnode.com",
+      "https://optimism-rpc.publicnode.com",
       "https://optimism.llamarpc.com",
       "https://rpc.ankr.com/optimism",
     ],
