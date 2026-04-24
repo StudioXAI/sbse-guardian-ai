@@ -1,12 +1,14 @@
 /* ─────────────────────────────────────────────────────────────
-   Claude AI Analyst — Batch 5B
+   Claude AI Analyst — Batch 5C
 
-   Two functions:
-   - generateAiSummary: short 3-paragraph summary for free tier
-   - generateDeepWalkthrough: expanded premium analysis with per-section
-     deep dives. Only called for premium unlocked reports.
-
-   Both cache per (contract, chainId) for 24h to minimize cost.
+   Fixes:
+   1. Strict system prompt: AI MUST NOT name any chain other than
+      the one passed in, and MUST mention all chains in multiChain if
+      provided. Kills the "Base blockchain" hallucination.
+   2. New enrichment input: coinGeckoData from price lookup, gives AI
+      real market cap / current price / 24h volume / other-chain listings
+      to work with.
+   3. Same caching (24h per contract+chainId).
    ───────────────────────────────────────────────────────────── */
 
 import { debug } from "./constants";
@@ -30,6 +32,19 @@ export interface DeepWalkthrough {
   recommendation: string;
 }
 
+/** Extra context from CoinGecko that enriches the AI prompt. Optional. */
+export interface MarketEnrichment {
+  currentPriceUsd?: number;
+  priceChange24hPct?: number;
+  marketCapUsd?: number;
+  volume24hUsd?: number;
+  /** All chains CoinGecko knows about this token, e.g. ["ethereum", "polygon-pos"] */
+  platforms?: string[];
+  coinGeckoId?: string;
+  /** CoinGecko's own description — we summarize, don't copy. */
+  description?: string;
+}
+
 interface CacheEntry<T> {
   at: number;
   data: T;
@@ -40,10 +55,16 @@ const walkthroughCache = new Map<string, CacheEntry<DeepWalkthrough>>();
 
 const SYSTEM_PROMPT_SHORT = `You are a security analyst for SbSe Guardian, a smart contract risk scanner used by retail crypto users.
 
-Your job: translate technical audit findings into plain English that a non-technical crypto user can understand.
+Your job: translate technical audit findings into plain English a non-technical user can understand.
 
-RULES:
-- Write at a 12th-grade reading level. No jargon unless explained inline.
+ABSOLUTE RULES ABOUT CHAINS:
+- The contract's primary chain is given in the CHAIN field. ONLY reference that chain name.
+- If MULTI-CHAIN PLATFORMS is listed, you MAY mention the token exists on those chains too.
+- NEVER invent a chain name that isn't in CHAIN or MULTI-CHAIN PLATFORMS. Do NOT say "Base", "Arbitrum", "Solana", "Polygon" unless it appears in one of those fields in the input.
+- If unsure which chain something is on, say "this chain" instead of guessing.
+
+OTHER RULES:
+- 12th-grade reading level. No jargon unless explained inline.
 - Be honest about risks AND strengths. Don't catastrophize. Don't reassure.
 - NEVER say "safe to invest" or "good investment" or recommend actions.
 - NEVER predict price movements.
@@ -68,7 +89,13 @@ const SYSTEM_PROMPT_DEEP = `You are a senior smart contract security analyst pro
 
 Your job: a thorough, accessible walkthrough of what this contract actually does, who controls it, and what could go wrong. Longer than the free summary but still plain English.
 
-RULES:
+ABSOLUTE RULES ABOUT CHAINS:
+- The contract's primary chain is given in the CHAIN field. ONLY reference that chain name.
+- If MULTI-CHAIN PLATFORMS is listed, you MAY mention the token exists on those chains too.
+- NEVER invent a chain name that isn't in CHAIN or MULTI-CHAIN PLATFORMS.
+- If the token is on multiple chains per MULTI-CHAIN PLATFORMS, explicitly note that in section 1.
+
+OTHER RULES:
 - 12th-grade reading level. Explain technical terms inline on first use.
 - Be specific — reference actual findings from the report, don't generalize.
 - NEVER recommend buying, selling, or holding. NEVER predict price.
@@ -92,13 +119,25 @@ OUTPUT FORMAT (strict JSON only, no markdown, no prose around JSON):
   "recommendation": "<1-2 sentences starting 'What to consider:' — neutral, non-directive>"
 }
 
-Sections should cover: (1) What this contract is, (2) Who controls it and how, (3) Key risks, (4) Trading considerations. Exactly 4 sections.`;
+Sections should cover: (1) What this contract is and which chains it exists on, (2) Who controls it and how, (3) Key risks, (4) Trading considerations. Exactly 4 sections.`;
 
 function summaryKey(addr: string, chainId: string): string {
   return `${chainId}:${addr.toLowerCase()}`;
 }
 
-function buildInputContext(report: AuditReport): string {
+function formatUsd(n: number | undefined): string {
+  if (typeof n !== "number" || !Number.isFinite(n)) return "n/a";
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+  if (n >= 1) return `$${n.toFixed(2)}`;
+  return `$${n.toPrecision(3)}`;
+}
+
+function buildInputContext(
+  report: AuditReport,
+  enrichment?: MarketEnrichment | null,
+): string {
   const findings = report.findings
     .map((f) => `[${f.severity.toUpperCase()}] ${f.label}${f.detail ? ` — ${f.detail}` : ""}`)
     .join("\n");
@@ -107,12 +146,31 @@ function buildInputContext(report: AuditReport): string {
     .map((l) => `${l.label}: ${l.score}/10 (${l.summary})`)
     .join("\n");
 
+  const multiChainLine =
+    enrichment?.platforms && enrichment.platforms.length > 1
+      ? `MULTI-CHAIN PLATFORMS: ${enrichment.platforms.join(", ")}`
+      : "MULTI-CHAIN PLATFORMS: (none known)";
+
+  const marketBlock = enrichment
+    ? `\nMARKET DATA (from CoinGecko):
+- Current Price: ${formatUsd(enrichment.currentPriceUsd)}
+- 24h Price Change: ${
+          typeof enrichment.priceChange24hPct === "number"
+            ? enrichment.priceChange24hPct.toFixed(2) + "%"
+            : "n/a"
+        }
+- Market Cap: ${formatUsd(enrichment.marketCapUsd)}
+- 24h Volume: ${formatUsd(enrichment.volume24hUsd)}`
+    : "\nMARKET DATA: not available";
+
   return `CONTRACT: ${report.contractAddress}
 CHAIN: ${report.chain}
+${multiChainLine}
 PROJECT: ${report.project}
 TOKEN TYPE: ${report.tokenType}
 VERIFIED SOURCE: ${report.verified}
 COMPILER: ${report.compilerVersion || "unknown"}
+${marketBlock}
 
 COMPUTED SCORES:
 - Risk Score: ${report.riskScore}/10 (1 = safest)
@@ -226,6 +284,7 @@ async function callClaude<T>(
 
 export async function generateAiSummary(
   report: AuditReport,
+  enrichment?: MarketEnrichment | null,
 ): Promise<AiSummary | null> {
   const key = summaryKey(report.contractAddress, report.chainId);
   const cached = summaryCache.get(key);
@@ -233,7 +292,7 @@ export async function generateAiSummary(
 
   const summary = await callClaude<AiSummary>(
     SYSTEM_PROMPT_SHORT,
-    buildInputContext(report),
+    buildInputContext(report, enrichment),
     800,
     isValidSummary,
   );
@@ -256,6 +315,7 @@ export async function generateAiSummary(
 
 export async function generateDeepWalkthrough(
   report: AuditReport,
+  enrichment?: MarketEnrichment | null,
 ): Promise<DeepWalkthrough | null> {
   const key = summaryKey(report.contractAddress, report.chainId);
   const cached = walkthroughCache.get(key);
@@ -263,7 +323,7 @@ export async function generateDeepWalkthrough(
 
   const walkthrough = await callClaude<DeepWalkthrough>(
     SYSTEM_PROMPT_DEEP,
-    buildInputContext(report),
+    buildInputContext(report, enrichment),
     2000,
     isValidWalkthrough,
   );

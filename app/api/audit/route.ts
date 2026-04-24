@@ -22,6 +22,7 @@ import { checkLiquidityLock } from "@/lib/checkLiquidityLock";
 import { checkWalletTraps } from "@/lib/checkWalletTraps";
 import { predictRugPull } from "@/lib/predictRugPull";
 import { generateAiSummary, generateDeepWalkthrough } from "@/lib/aiSummary";
+import { lookupTokenByContract } from "@/lib/coinGeckoClient";
 import { analyzeBytecode, bytecodeToFindings } from "@/lib/bytecodeAnalyzer";
 
 import { honeypotCheck } from "@/lib/analyzers/honeypotCheck";
@@ -654,9 +655,48 @@ export async function POST(req: Request) {
       aiSummary: null,
     };
 
+    /* ── Fetch CoinGecko enrichment (primary data source) ── */
+    let enrichment = null;
+    try {
+      const cg = await lookupTokenByContract(contractAddress, chain.chainName);
+      if (cg) {
+        enrichment = {
+          currentPriceUsd: cg.currentPriceUsd,
+          priceChange24hPct: cg.priceChange24hPct,
+          marketCapUsd: cg.marketCapUsd,
+          volume24hUsd: cg.volume24hUsd,
+          platforms: cg.platforms,
+          coinGeckoId: cg.coinGeckoId,
+          description: cg.description,
+        };
+        // Let CoinGecko overwrite weaker DexScreener market cap if stronger
+        if (cg.marketCapUsd && cg.marketCapUsd > 0) {
+          report.marketCap = formatCompactUsd(cg.marketCapUsd);
+        }
+        // Fill in socials from CoinGecko if DexScreener missed any
+        if (cg.twitter && !report.socials?.twitter) {
+          report.socials = { ...(report.socials || {}), twitter: cg.twitter };
+        }
+        if (cg.telegram && !report.socials?.telegram) {
+          report.socials = { ...(report.socials || {}), telegram: cg.telegram };
+        }
+        if (cg.reddit && !report.socials?.reddit) {
+          report.socials = { ...(report.socials || {}), reddit: cg.reddit };
+        }
+        if (cg.github && !report.socials?.github) {
+          report.socials = { ...(report.socials || {}), github: cg.github };
+        }
+        if (cg.homepage && !report.website) {
+          report.website = cg.homepage;
+        }
+      }
+    } catch (e) {
+      debug("CoinGecko enrichment failed:", e);
+    }
+
     /* ── Generate AI summary (non-blocking — null if API key missing or call fails) ── */
     try {
-      report.aiSummary = await generateAiSummary(report);
+      report.aiSummary = await generateAiSummary(report, enrichment);
     } catch (e) {
       debug("AI summary generation failed:", e);
       report.aiSummary = null;
@@ -666,7 +706,7 @@ export async function POST(req: Request) {
     const includeWalkthrough = body?.includeWalkthrough === true || body?.includeWalkthrough === "1";
     if (includeWalkthrough) {
       try {
-        (report as any).deepWalkthrough = await generateDeepWalkthrough(report);
+        (report as any).deepWalkthrough = await generateDeepWalkthrough(report, enrichment);
       } catch (e) {
         debug("Deep walkthrough generation failed:", e);
         (report as any).deepWalkthrough = null;
@@ -681,4 +721,11 @@ export async function POST(req: Request) {
       { status: 500 },
     );
   }
+}
+
+function formatCompactUsd(n: number): string {
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${n.toFixed(2)}`;
 }
