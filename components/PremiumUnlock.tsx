@@ -194,22 +194,18 @@ export default function PremiumUnlock({ report }: { report: AuditReport }) {
         // walletProvider via WalletConnect mobile is unreliable for read calls.
         const rpcList = currentChain.rpcs;
         async function readErc20Balance(tokenAddr: string): Promise<bigint> {
-          console.log("[BALANCE] Reading", tokenAddr, "on chain", currentChain!.id, "for", address);
           for (const rpcUrl of rpcList) {
             try {
-              console.log("[BALANCE] Trying RPC:", rpcUrl);
               const provider = new JsonRpcProvider(rpcUrl, currentChain!.id, {
                 staticNetwork: true,
               });
-              const contract = new Contract(tokenAddr, ERC20_ABI, provider);
+              const contract = new Contract(tokenAddr.toLowerCase(), ERC20_ABI, provider);
               const bal = (await contract.balanceOf(address)) as bigint;
-              console.log("[BALANCE] Success from", rpcUrl, "balance:", bal.toString());
               return bal;
-            } catch (err: any) {
-              console.warn("[BALANCE] RPC failed:", rpcUrl, "error:", err?.message || err);
+            } catch {
+              // try next RPC
             }
           }
-          console.error("[BALANCE] All RPCs failed for", tokenAddr);
           return BigInt(0);
         }
 
