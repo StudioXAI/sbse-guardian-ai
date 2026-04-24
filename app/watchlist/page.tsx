@@ -88,9 +88,14 @@ function WatchlistPageInner() {
       <div className="max-w-3xl mx-auto px-6 py-12">
         <div className="mb-8">
           <div
-            className="label-sm mb-2"
+            className="flex items-center gap-2 label-sm mb-2"
             style={{ color: "var(--accent-soft)" }}
           >
+            <img
+              src="/logo.png"
+              alt="SbSe Guardian"
+              className="h-5 w-5 object-contain"
+            />
             SbSe Guardian
           </div>
           <h1 className="text-3xl font-semibold tracking-tight mb-2" style={{ letterSpacing: "-0.02em" }}>

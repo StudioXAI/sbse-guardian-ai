@@ -174,10 +174,17 @@ export default function Home() {
       {/* Footer */}
       <footer className="mt-20 border-t" style={{ borderColor: "var(--border)" }}>
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <p className="font-mono text-[10px] tracking-[0.3em] uppercase"
-             style={{ color: "var(--fg-dim)" }}>
-            SbSe Guardian · Smart Contract Intelligence
-          </p>
+          <div className="flex items-center gap-2">
+            <img
+              src="/logo.png"
+              alt="SbSe Guardian"
+              className="h-5 w-5 object-contain"
+            />
+            <p className="font-mono text-[10px] tracking-[0.3em] uppercase"
+               style={{ color: "var(--fg-dim)" }}>
+              SbSe Guardian · Smart Contract Intelligence
+            </p>
+          </div>
           <p className="text-xs" style={{ color: "var(--fg-dim)" }}>
             Automated analysis is a signal, not a guarantee. Always DYOR.
           </p>
