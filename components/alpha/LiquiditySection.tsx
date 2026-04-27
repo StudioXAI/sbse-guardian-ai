@@ -17,7 +17,7 @@ type LiqTab = "tvl" | "orderbook" | "radar" | "charts";
 const TABS: Array<{ id: LiqTab; label: string; sub: string }> = [
   { id: "tvl", label: "TVL", sub: "DeFi capital flows" },
   { id: "orderbook", label: "Order book", sub: "Live depth · Bookmap" },
-  { id: "radar", label: "Liquidity radar", sub: "Top 10 · radial map" },
+  { id: "radar", label: "Liquidity heatmap", sub: "Top 10 · long/short walls" },
   { id: "charts", label: "Charts", sub: "Multi-timeframe analysis" },
 ];
 

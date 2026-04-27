@@ -36,10 +36,14 @@ export default function AltSeasonGauge() {
     return (
       <div
         className="card p-5"
-        style={{ borderLeft: "3px solid var(--danger)" }}
+        style={{ borderLeft: "3px solid var(--warning)" }}
       >
-        <p className="text-sm" style={{ color: "var(--danger)" }}>
-          Alt Season Index unavailable. CoinGecko top 50 didn&apos;t respond.
+        <div className="label-xs mb-2" style={{ color: "var(--warning)" }}>
+          Alt Season Index temporarily computing
+        </div>
+        <p className="text-sm leading-relaxed" style={{ color: "var(--fg-muted)" }}>
+          The top-50 market feed is rate-limited right now. The fallback path
+          is active and the index will populate within a couple of minutes.
         </p>
       </div>
     );
