@@ -8,6 +8,7 @@
 
 import { TtlCache } from "./cache";
 import { fetchMarketSnapshot } from "./marketPrices";
+import { fetchInfluencerSentiment } from "./influencerTracker";
 import type { AssetPrediction, Direction, PredictionResponse, Signal } from "./types";
 
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
@@ -113,9 +114,13 @@ async function callAnthropic(signals: Signal[]): Promise<RawPrediction | null> {
     text: s.text,
   }));
 
-  /* Fetch real prices in parallel so the AI grounds targets in
-     actual current spot levels rather than guessing. */
-  const snapshot = await fetchMarketSnapshot();
+  /* Fetch real prices and influencer sentiment in parallel so the AI
+     grounds targets in actual current spot levels and current
+     consensus from a curated private list of high-signal accounts. */
+  const [snapshot, influencerSentiment] = await Promise.all([
+    fetchMarketSnapshot(),
+    fetchInfluencerSentiment(),
+  ]);
 
   const priceContext = snapshot
     ? `Current spot prices (real, from CoinGecko):
@@ -126,7 +131,24 @@ async function callAnthropic(signals: Signal[]): Promise<RawPrediction | null> {
 Use these as anchors for any target price you generate. Do not invent prices that contradict spot.`
     : "Live prices unavailable — generate ranges, not exact targets.";
 
+  /* Influencer sentiment is anonymized — it's an aggregate score from
+     a private list of curated X accounts, never tied to specific names
+     in the response. The high-conviction flag, when set, indicates the
+     operator-flagged account has posted strongly. Weight this signal
+     ~30% when it has decent confidence. */
+  const influencerContext = influencerSentiment
+    ? `Influencer aggregate sentiment (private, weighted):
+- Crypto: ${influencerSentiment.cryptoSentiment >= 0 ? "+" : ""}${influencerSentiment.cryptoSentiment} (${influencerSentiment.cryptoDirection})
+- Stocks/macro: ${influencerSentiment.stockSentiment >= 0 ? "+" : ""}${influencerSentiment.stockSentiment} (${influencerSentiment.stockDirection})
+- Confidence: ${influencerSentiment.confidence}/100 from ${influencerSentiment.postsScored} posts across ${influencerSentiment.accountsContributing} accounts
+- High-conviction flag: ${influencerSentiment.highConvictionFlag ? "YES — operator-flagged voice posting strongly" : "no"}
+
+Treat this as an additional input, not a primary driver. Do not name accounts.`
+    : "";
+
   const userPrompt = `${priceContext}
+
+${influencerContext}
 
 Live signals to synthesize (newest first):
 

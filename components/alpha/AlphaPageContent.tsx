@@ -16,6 +16,7 @@ import SocialSection from "@/components/alpha/SocialSection";
 import AccessBanner, { type AccessStatus } from "@/components/alpha/AccessBanner";
 import LockedCard from "@/components/alpha/LockedCard";
 import PlanSelector from "@/components/alpha/PlanSelector";
+import AssistantWidget from "@/components/alpha/AssistantWidget";
 
 interface AccessApiResponse {
   success: boolean;
@@ -162,6 +163,9 @@ export default function AlphaPageContent() {
         onClose={() => setPlanSelectorOpen(false)}
         onSelect={handleSelectPlan}
       />
+
+      {/* Floating AI assistant — context-aware per section */}
+      <AssistantWidget section={section} />
 
       <footer className="mt-20 border-t" style={{ borderColor: "var(--border)" }}>
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4">

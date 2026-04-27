@@ -147,9 +147,9 @@ export async function fetchLivePolymarketBets(): Promise<PolymarketBet[]> {
       .map((m, i) => toBet(m, i))
       .filter((b): b is PolymarketBet => b !== null && b.volumeUsd > 0)
       .sort((a, b) => b.volumeUsd - a.volumeUsd)
-      .slice(0, 6);
+      .slice(0, 50);
 
-    if (cryptoBets.length >= 3) {
+    if (cryptoBets.length >= 20) {
       cache.set("crypto", cryptoBets);
       return cryptoBets;
     }
@@ -159,13 +159,13 @@ export async function fetchLivePolymarketBets(): Promise<PolymarketBet[]> {
       .map((m, i) => toBet(m, i))
       .filter((b): b is PolymarketBet => b !== null && b.volumeUsd > 50_000)
       .sort((a, b) => b.volumeUsd - a.volumeUsd)
-      .slice(0, 6);
+      .slice(0, 50);
 
     /* Merge crypto + top, dedup by id. */
     const merged: PolymarketBet[] = [...cryptoBets];
     const seen = new Set(merged.map((b) => b.id));
     for (const b of topBets) {
-      if (merged.length >= 6) break;
+      if (merged.length >= 50) break;
       if (!seen.has(b.id)) {
         merged.push(b);
         seen.add(b.id);
