@@ -22,6 +22,7 @@ interface Props {
 export default function PredictionsSection({ freeMode = false, onUpgrade }: Props) {
   const [data, setData] = useState<PredictionResponse | null>(null);
   const [markets, setMarkets] = useState<MarketsResp | null>(null);
+  const [marketsErr, setMarketsErr] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"ai" | "crypto" | "stocks">("ai");
@@ -29,13 +30,22 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setMarketsErr(false);
     const [pred, mkt] = await Promise.all([
       alphaGet<PredictionResponse>("/api/alpha/predict"),
       alphaGet<MarketsResp>("/api/alpha/markets"),
     ]);
     if (!pred) setError("Couldn't reach the prediction engine.");
     else setData(pred);
-    if (mkt) setMarkets(mkt);
+
+    if (mkt) {
+      setMarkets(mkt);
+      if (mkt.crypto.length === 0 && mkt.stocks.length === 0) {
+        setMarketsErr(true);
+      }
+    } else {
+      setMarketsErr(true);
+    }
     setLoading(false);
   }, []);
 
@@ -53,7 +63,7 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
           <div className="text-[12px]" style={{ color: "var(--fg-muted)" }}>
             <span style={{ color: "var(--accent-soft)" }}>Free preview</span> ·
             AI summary only. Upgrade for multi-asset cards, multi-timeframe
-            BTC, and full Top 50 crypto/stock tables.
+            BTC, the Alt Season Index, and full Top 50 crypto/stock tables.
           </div>
           {onUpgrade && (
             <button
@@ -75,14 +85,14 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
         </div>
       )}
 
-      {/* Sub-tabs for predictions, top crypto, top stocks. Free users only see AI. */}
+      {/* Sub-tabs for paid users. */}
       {!freeMode && (
         <div className="flex flex-wrap gap-2">
           {(
             [
               { id: "ai", label: "AI Predictions", sub: "Multi-asset · Multi-timeframe" },
-              { id: "crypto", label: "Top 50 Crypto", sub: "By market cap · CoinGecko" },
-              { id: "stocks", label: "Top 50 Stocks", sub: "US large-cap · Yahoo Finance" },
+              { id: "crypto", label: "Top 50 Crypto", sub: "By market cap · live" },
+              { id: "stocks", label: "Top 50 Stocks", sub: "US large-cap · live" },
             ] as const
           ).map((t) => (
             <button
@@ -114,10 +124,12 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
         </div>
       )}
 
-      {/* AI Predictions tab */}
+      {/* AI Predictions tab — always populates with the AI summary even when
+          market data failed, so this tab is never empty. */}
       {(freeMode || tab === "ai") && (
         <>
-          {/* Alt Season Index — paid users only, full feature. */}
+          {/* Alt Season Index — always rendered for paid; falls back gracefully
+              if data is unavailable (the gauge component handles its own empty state). */}
           {!freeMode && <AltSeasonGauge />}
 
           <div
@@ -128,7 +140,7 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
               className="label-xs mb-3 flex items-center justify-between"
               style={{ color: "var(--accent-soft)" }}
             >
-              <span>AI Market Summary · 1–2H Forecast</span>
+              <span>AI market summary · 1–2H forecast</span>
               <button
                 type="button"
                 onClick={load}
@@ -149,9 +161,21 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
             </div>
 
             {error && (
-              <p className="text-sm" style={{ color: "var(--danger)" }}>
-                {error}
-              </p>
+              <div
+                className="p-3 rounded-lg"
+                style={{ background: "var(--bg-elevated)" }}
+              >
+                <div
+                  className="font-mono text-[11px] mb-1"
+                  style={{ color: "var(--danger)", letterSpacing: "0.05em" }}
+                >
+                  PREDICTION ENGINE TEMPORARILY UNAVAILABLE
+                </div>
+                <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>
+                  {error} The signals tab still works — it pulls fresh data
+                  every minute.
+                </p>
+              </div>
             )}
 
             {data && (
@@ -195,24 +219,98 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
         </>
       )}
 
-      {/* Top 50 Crypto tab */}
+      {/* Top 50 Crypto */}
       {!freeMode && tab === "crypto" && (
-        <MarketTable
-          title="Top 50 cryptocurrencies"
-          subtitle="By market cap · live from CoinGecko · refreshes every 5 minutes"
-          rows={markets?.crypto ?? []}
-          type="crypto"
-        />
+        <>
+          {markets && markets.crypto.length > 0 ? (
+            <MarketTable
+              title="Top 50 cryptocurrencies"
+              subtitle="By market cap · refreshes every 5 minutes"
+              rows={markets.crypto}
+              type="crypto"
+            />
+          ) : (
+            <FallbackPanel
+              title="Top 50 crypto temporarily computing"
+              body="Our primary market-data feed is rate-limited right now and the fallback feed is initializing. Live data will populate within a few minutes — try the AI Predictions tab in the meantime, which has its own real-time signal grounding."
+              showRetry
+              onRetry={load}
+            />
+          )}
+        </>
       )}
 
-      {/* Top 50 Stocks tab */}
+      {/* Top 50 Stocks */}
       {!freeMode && tab === "stocks" && (
-        <MarketTable
-          title="Top 50 US stocks"
-          subtitle="Large-cap · live from Yahoo Finance · refreshes every 5 minutes"
-          rows={markets?.stocks ?? []}
-          type="stocks"
-        />
+        <>
+          {markets && markets.stocks.length > 0 ? (
+            <MarketTable
+              title="Top 50 US stocks"
+              subtitle="Large-cap · refreshes every 5 minutes"
+              rows={markets.stocks}
+              type="stocks"
+            />
+          ) : (
+            <FallbackPanel
+              title="Top 50 stocks temporarily computing"
+              body="The stocks feed sometimes restricts based on serverless region. The fallback path is active — check back in 2-3 minutes. Crypto data and AI Predictions are unaffected."
+              showRetry
+              onRetry={load}
+            />
+          )}
+        </>
+      )}
+
+      {/* Decentralization disclaimer */}
+      <div
+        className="card p-3"
+        style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}
+      >
+        <p className="text-[11px]" style={{ color: "var(--fg-dim)" }}>
+          Predictions are AI-generated based on aggregated public market
+          signals. Not financial advice. SbSe Guardian Alpha is non-custodial
+          — no execution, no custody, no KYC.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function FallbackPanel({
+  title,
+  body,
+  showRetry,
+  onRetry,
+}: {
+  title: string;
+  body: string;
+  showRetry?: boolean;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="card p-5" style={{ borderLeft: "3px solid var(--warning)" }}>
+      <div className="label-xs mb-2" style={{ color: "var(--warning)" }}>
+        {title}
+      </div>
+      <p className="text-[13px] mb-3 leading-relaxed" style={{ color: "var(--fg-muted)" }}>
+        {body}
+      </p>
+      {showRetry && onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="px-3 py-1.5 rounded-md transition-colors"
+          style={{
+            background: "var(--accent-dim)",
+            color: "var(--accent-soft)",
+            fontSize: "11px",
+            fontWeight: 500,
+            border: "1px solid var(--border-accent)",
+            cursor: "pointer",
+          }}
+        >
+          Retry now
+        </button>
       )}
     </div>
   );

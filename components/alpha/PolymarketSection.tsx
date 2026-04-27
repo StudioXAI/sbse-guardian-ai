@@ -2,98 +2,81 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { PolymarketBet } from "@/lib/alpha/types";
+import type { PolymarketSplit } from "@/lib/alpha/polymarketClient";
 import { alphaGet } from "@/lib/alpha/client";
 import { directionFillVar } from "./DirectionBadge";
 import { formatUsd } from "@/lib/alpha/format";
 import { computeMarketImpact } from "@/lib/alpha/marketImpactEngine";
-import type { CryptoRow, StockRow } from "@/lib/alpha/topMarketsClient";
-
-interface MarketsResp {
-  crypto: CryptoRow[];
-  stocks: StockRow[];
-  generatedAt: number;
-}
 
 export default function PolymarketSection() {
-  const [bets, setBets] = useState<PolymarketBet[] | null>(null);
-  const [markets, setMarkets] = useState<MarketsResp | null>(null);
-  const [filter, setFilter] = useState<"all" | "yes" | "no" | "neutral">("all");
+  const [data, setData] = useState<PolymarketSplit | null>(null);
+  const [tab, setTab] = useState<"ongoing" | "closed">("ongoing");
+  const [filter, setFilter] = useState<"all" | "yes" | "no">("all");
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [b, m] = await Promise.all([
-        alphaGet<PolymarketBet[]>("/api/alpha/polymarket"),
-        alphaGet<MarketsResp>("/api/alpha/markets"),
-      ]);
-      if (cancelled) return;
-      setBets(b ?? []);
-      setMarkets(m ?? null);
+      const d = await alphaGet<PolymarketSplit>("/api/alpha/polymarket");
+      if (!cancelled) setData(d ?? { ongoing: [], closed: [] });
     })();
     return () => {
       cancelled = true;
     };
   }, []);
 
+  const activeBets = tab === "ongoing" ? data?.ongoing ?? [] : data?.closed ?? [];
+
   const impact = useMemo(
-    () => (bets ? computeMarketImpact(bets) : null),
-    [bets],
+    () => (data ? computeMarketImpact(data.ongoing) : null),
+    [data],
   );
 
   const filteredBets = useMemo(() => {
-    if (!bets) return [];
-    if (filter === "all") return bets;
-    if (filter === "yes") return bets.filter((b) => b.yesPct >= 60);
-    if (filter === "no") return bets.filter((b) => b.yesPct <= 40);
-    return bets.filter((b) => b.yesPct > 40 && b.yesPct < 60);
-  }, [bets, filter]);
+    if (!activeBets.length) return [];
+    if (filter === "all") return activeBets;
+    if (filter === "yes") return activeBets.filter((b) => b.yesPct >= 60);
+    return activeBets.filter((b) => b.yesPct <= 40);
+  }, [activeBets, filter]);
 
-  const topGainers = (markets?.crypto ?? [])
-    .filter((c) => c.change24hPct > 0)
-    .sort((a, b) => b.change24hPct - a.change24hPct)
-    .slice(0, 5);
-  const topLosers = (markets?.crypto ?? [])
-    .filter((c) => c.change24hPct < 0)
-    .sort((a, b) => a.change24hPct - b.change24hPct)
-    .slice(0, 5);
+  /* Top 5 highest-volume bets in current tab. */
+  const highestBets = useMemo(() => {
+    return [...activeBets].sort((a, b) => b.volumeUsd - a.volumeUsd).slice(0, 5);
+  }, [activeBets]);
+
+  /* YES / NO dominance counts. */
+  const dominance = useMemo(() => {
+    let yesWins = 0;
+    let noWins = 0;
+    let toss = 0;
+    for (const b of activeBets) {
+      if (b.yesPct >= 60) yesWins++;
+      else if (b.yesPct <= 40) noWins++;
+      else toss++;
+    }
+    return { yesWins, noWins, toss };
+  }, [activeBets]);
 
   return (
     <div className="space-y-5">
-      {/* Source banner */}
+      {/* Header */}
       <div
         className="card p-4 flex items-center justify-between flex-wrap gap-2"
         style={{ borderLeft: "3px solid var(--accent)" }}
       >
         <div>
           <div className="label-xs" style={{ color: "var(--accent-soft)" }}>
-            Polymarket · real-money prediction markets
+            Real-money prediction markets
           </div>
           <div className="text-[12px] mt-1" style={{ color: "var(--fg-muted)" }}>
-            {bets === null
+            {data === null
               ? "Loading…"
-              : `${bets.length} active markets · sorted by 24h volume`}
+              : `${data.ongoing.length} ongoing · ${data.closed.length} closed`}
           </div>
         </div>
-        <a
-          href="https://polymarket.com"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="px-3 py-1.5 rounded-md font-mono"
-          style={{
-            background: "var(--bg-subtle)",
-            color: "var(--fg-muted)",
-            border: "1px solid var(--border)",
-            fontSize: "11px",
-            letterSpacing: "0.05em",
-            textDecoration: "none",
-          }}
-        >
-          polymarket.com ↗
-        </a>
       </div>
 
-      {/* Market impact summary */}
-      {impact && (
+      {/* Market impact (computed from ongoing markets) */}
+      {impact && data && data.ongoing.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
           <ImpactCard
             label="Crypto market impact"
@@ -114,19 +97,79 @@ export default function PolymarketSection() {
         </div>
       )}
 
-      {/* Crypto top movers reference */}
-      {markets && markets.crypto.length > 0 && (
+      {/* Ongoing / Closed tabs */}
+      <div className="flex flex-wrap gap-2">
+        <SubTab
+          active={tab === "ongoing"}
+          label="Ongoing markets"
+          sub={`Top ${data?.ongoing.length ?? 0} live`}
+          onClick={() => setTab("ongoing")}
+        />
+        <SubTab
+          active={tab === "closed"}
+          label="Closed markets"
+          sub={`Top ${data?.closed.length ?? 0} settled`}
+          onClick={() => setTab("closed")}
+        />
+      </div>
+
+      {/* Dominance + highest bets summary */}
+      {activeBets.length > 0 && (
         <div className="grid gap-3 md:grid-cols-2">
-          <MoverList title="Top crypto gainers · 24h" rows={topGainers} positive />
-          <MoverList title="Top crypto losers · 24h" rows={topLosers} positive={false} />
+          <div className="card p-4">
+            <div className="label-xs mb-3" style={{ color: "var(--fg-muted)" }}>
+              {tab === "ongoing" ? "YES vs NO leaning" : "YES vs NO outcomes"}
+            </div>
+            <DominanceBar
+              yesWins={dominance.yesWins}
+              noWins={dominance.noWins}
+              toss={dominance.toss}
+              isClosed={tab === "closed"}
+            />
+          </div>
+          <div className="card p-4">
+            <div className="label-xs mb-3" style={{ color: "var(--fg-muted)" }}>
+              Highest bets · top 5 by volume
+            </div>
+            <div className="space-y-1.5">
+              {highestBets.map((b, i) => (
+                <div
+                  key={b.id}
+                  className="flex items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    <span
+                      className="font-mono text-[10px] flex-shrink-0"
+                      style={{ color: "var(--fg-dim)", width: "16px" }}
+                    >
+                      #{i + 1}
+                    </span>
+                    <span
+                      className="truncate text-[12px]"
+                      style={{ color: "var(--fg)" }}
+                    >
+                      {b.question}
+                    </span>
+                  </div>
+                  <span
+                    className="font-mono flex-shrink-0"
+                    style={{ color: "var(--accent-soft)", fontSize: "11px" }}
+                  >
+                    {formatUsd(b.volumeUsd)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Bets list with filters */}
+      {/* Bet list with filter */}
       <div className="card p-5">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
           <div className="label-sm" style={{ color: "var(--fg-muted)" }}>
-            Top 50 markets · {filteredBets.length} shown
+            {tab === "ongoing" ? "Top 50 ongoing" : "Top 50 closed"} ·{" "}
+            {filteredBets.length} shown
           </div>
           <div
             className="inline-flex p-0.5 rounded-md"
@@ -138,9 +181,8 @@ export default function PolymarketSection() {
             {(
               [
                 ["all", "All"],
-                ["yes", "YES leaning"],
-                ["no", "NO leaning"],
-                ["neutral", "Neutral"],
+                ["yes", tab === "ongoing" ? "YES leaning" : "YES won"],
+                ["no", tab === "ongoing" ? "NO leaning" : "NO won"],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -164,13 +206,13 @@ export default function PolymarketSection() {
           </div>
         </div>
 
-        {bets === null && (
+        {data === null && (
           <div className="text-sm" style={{ color: "var(--fg-dim)" }}>
-            Loading Polymarket consensus…
+            Loading prediction market consensus…
           </div>
         )}
 
-        {bets && filteredBets.length === 0 && (
+        {data && activeBets.length === 0 && (
           <div
             className="p-4 rounded-lg"
             style={{ background: "var(--bg-elevated)" }}
@@ -179,25 +221,165 @@ export default function PolymarketSection() {
               className="font-mono text-[11px] mb-2"
               style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
             >
-              NO MARKETS MATCH FILTER
+              {tab === "ongoing"
+                ? "NO ONGOING MARKETS RIGHT NOW"
+                : "NO CLOSED MARKETS IN RECENT WINDOW"}
             </div>
             <p className="text-[13px]" style={{ color: "var(--fg-muted)" }}>
-              Try a different filter, or refresh — Polymarket markets shift
-              fast.
+              {tab === "ongoing"
+                ? "Live markets are temporarily unreachable. The feed refreshes every 5 minutes."
+                : "No recently-settled markets to display. Switch to Ongoing for live consensus."}
             </p>
           </div>
         )}
 
-        {bets && filteredBets.length > 0 && (
+        {data && filteredBets.length === 0 && activeBets.length > 0 && (
+          <p className="text-[13px]" style={{ color: "var(--fg-muted)" }}>
+            No markets match this filter. Try All to see everything.
+          </p>
+        )}
+
+        {data && filteredBets.length > 0 && (
           <div
             className="overflow-y-auto space-y-2"
-            style={{ maxHeight: "560px" }}
+            style={{ maxHeight: "640px" }}
           >
             {filteredBets.map((b) => (
               <BetRow key={b.id} bet={b} />
             ))}
           </div>
         )}
+      </div>
+
+      {/* Decentralization disclaimer */}
+      <div
+        className="card p-3"
+        style={{ background: "var(--bg-subtle)", borderColor: "var(--border)" }}
+      >
+        <p className="text-[11px]" style={{ color: "var(--fg-dim)" }}>
+          Prediction-market data aggregated from public blockchain consensus.
+          Not financial advice. SbSe Guardian Alpha provides intelligence,
+          not execution — no betting, no custody, no KYC.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function SubTab({
+  active,
+  label,
+  sub,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  sub: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="px-3 py-2 rounded-md text-left transition-colors"
+      style={{
+        background: active ? "var(--accent-dim)" : "var(--bg-subtle)",
+        border: active
+          ? "1px solid var(--border-accent)"
+          : "1px solid var(--border)",
+        color: active ? "var(--accent-soft)" : "var(--fg-muted)",
+        cursor: "pointer",
+      }}
+    >
+      <div className="font-mono" style={{ fontSize: "11px", letterSpacing: "0.06em" }}>
+        {label}
+      </div>
+      <div className="text-[10px] mt-0.5" style={{ color: "var(--fg-dim)" }}>
+        {sub}
+      </div>
+    </button>
+  );
+}
+
+function DominanceBar({
+  yesWins,
+  noWins,
+  toss,
+  isClosed,
+}: {
+  yesWins: number;
+  noWins: number;
+  toss: number;
+  isClosed: boolean;
+}) {
+  const total = yesWins + noWins + toss;
+  if (total === 0)
+    return (
+      <p className="text-[12px]" style={{ color: "var(--fg-dim)" }}>
+        No markets to analyze.
+      </p>
+    );
+  const yesPct = (yesWins / total) * 100;
+  const noPct = (noWins / total) * 100;
+  const tossPct = (toss / total) * 100;
+
+  return (
+    <div>
+      <div
+        className="flex h-[10px] rounded-full overflow-hidden mb-3"
+        style={{ background: "var(--bg-subtle)" }}
+      >
+        {yesPct > 0 && (
+          <div
+            style={{
+              width: `${yesPct}%`,
+              background: "var(--success)",
+            }}
+          />
+        )}
+        {tossPct > 0 && (
+          <div
+            style={{
+              width: `${tossPct}%`,
+              background: "var(--accent)",
+            }}
+          />
+        )}
+        {noPct > 0 && (
+          <div
+            style={{
+              width: `${noPct}%`,
+              background: "var(--danger)",
+            }}
+          />
+        )}
+      </div>
+      <div className="flex items-center justify-between text-[11px]">
+        <div className="flex items-center gap-1">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: "var(--success)" }}
+          />
+          <span style={{ color: "var(--success)" }}>
+            {isClosed ? "YES won" : "YES leaning"} · {yesWins}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: "var(--accent)" }}
+          />
+          <span style={{ color: "var(--fg-muted)" }}>Toss-up · {toss}</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <span
+            className="inline-block h-2 w-2 rounded-full"
+            style={{ background: "var(--danger)" }}
+          />
+          <span style={{ color: "var(--danger)" }}>
+            {isClosed ? "NO won" : "NO leaning"} · {noWins}
+          </span>
+        </div>
       </div>
     </div>
   );
@@ -233,10 +415,7 @@ function ImpactCard({
       : "NEUTRAL";
 
   return (
-    <div
-      className="card p-4"
-      style={{ borderLeft: `3px solid ${borderColor}` }}
-    >
+    <div className="card p-4" style={{ borderLeft: `3px solid ${borderColor}` }}>
       <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
         <div className="label-xs" style={{ color: "var(--fg-muted)" }}>
           {label}
@@ -257,7 +436,6 @@ function ImpactCard({
           {dirLabel}
         </span>
       </div>
-
       <div className="flex items-baseline gap-2 mb-2">
         <span
           className="font-mono font-medium"
@@ -270,19 +448,13 @@ function ImpactCard({
           impact score
         </span>
       </div>
-
-      {/* Bar from -100 to +100 */}
       <div
         className="relative h-[3px] rounded-full mb-3"
         style={{ background: "var(--border)" }}
       >
         <div
           className="absolute top-0 h-full"
-          style={{
-            background: "var(--fg-dim)",
-            left: "50%",
-            width: "1px",
-          }}
+          style={{ background: "var(--fg-dim)", left: "50%", width: "1px" }}
         />
         <div
           className="absolute top-0 h-full rounded-full"
@@ -293,75 +465,12 @@ function ImpactCard({
           }}
         />
       </div>
-
       <p className="text-[12px] leading-relaxed mb-2" style={{ color: "var(--fg)" }}>
         {narrative}
       </p>
       <div className="text-[10px]" style={{ color: "var(--fg-dim)" }}>
         {count} relevant {count === 1 ? "market" : "markets"} · {formatUsd(volumeUsd)} total volume
       </div>
-    </div>
-  );
-}
-
-function MoverList({
-  title,
-  rows,
-  positive,
-}: {
-  title: string;
-  rows: Array<{ symbol: string; name: string; change24hPct: number; priceUsd: number; imageUrl?: string }>;
-  positive: boolean;
-}) {
-  const color = positive ? "var(--success)" : "var(--danger)";
-  return (
-    <div className="card p-4">
-      <div
-        className="label-xs mb-3 flex items-center justify-between"
-        style={{ color: "var(--fg-muted)" }}
-      >
-        <span>{title}</span>
-        <span style={{ color }}>{positive ? "↑" : "↓"}</span>
-      </div>
-      {rows.length === 0 ? (
-        <p className="text-[12px]" style={{ color: "var(--fg-dim)" }}>
-          No data right now.
-        </p>
-      ) : (
-        <div className="space-y-1.5">
-          {rows.map((r) => (
-            <div
-              key={r.symbol}
-              className="flex items-center justify-between gap-2"
-            >
-              <div className="flex items-center gap-2 min-w-0 flex-1">
-                {r.imageUrl && (
-                  <img src={r.imageUrl} alt="" width={16} height={16} style={{ borderRadius: "50%" }} />
-                )}
-                <span
-                  className="font-medium truncate"
-                  style={{ color: "var(--fg)", fontSize: "12px" }}
-                >
-                  {r.symbol}
-                </span>
-                <span
-                  className="truncate"
-                  style={{ color: "var(--fg-dim)", fontSize: "10px" }}
-                >
-                  {r.name}
-                </span>
-              </div>
-              <span
-                className="font-mono flex-shrink-0"
-                style={{ color, fontSize: "11px" }}
-              >
-                {r.change24hPct >= 0 ? "+" : ""}
-                {r.change24hPct.toFixed(2)}%
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
@@ -374,14 +483,36 @@ function BetRow({ bet }: { bet: PolymarketBet }) {
       : bet.signalDirection === "bearish"
       ? "var(--danger)"
       : "var(--accent)";
-  const status =
-    bet.yesPct >= 60 ? "YES" : bet.yesPct <= 40 ? "NO" : "TOSS-UP";
-  const statusColor =
-    bet.yesPct >= 60
-      ? "var(--success)"
-      : bet.yesPct <= 40
-      ? "var(--danger)"
-      : "var(--fg-muted)";
+
+  /* Pill label based on whether market is closed and YES%. */
+  let pillLabel: string;
+  let pillBg: string;
+  let pillFg: string;
+  if (bet.isClosed) {
+    if (bet.yesPct >= 50) {
+      pillLabel = "YES WON";
+      pillBg = "var(--success-dim)";
+      pillFg = "var(--success)";
+    } else {
+      pillLabel = "NO WON";
+      pillBg = "var(--danger-dim)";
+      pillFg = "var(--danger)";
+    }
+  } else {
+    if (bet.yesPct >= 60) {
+      pillLabel = "YES";
+      pillBg = "var(--success-dim)";
+      pillFg = "var(--success)";
+    } else if (bet.yesPct <= 40) {
+      pillLabel = "NO";
+      pillBg = "var(--danger-dim)";
+      pillFg = "var(--danger)";
+    } else {
+      pillLabel = "TOSS-UP";
+      pillBg = "var(--bg-subtle)";
+      pillFg = "var(--fg-muted)";
+    }
+  }
 
   return (
     <div
@@ -402,23 +533,15 @@ function BetRow({ bet }: { bet: PolymarketBet }) {
           <span
             className="text-[9px] px-1.5 py-0.5 rounded font-mono"
             style={{
-              background:
-                bet.yesPct >= 60
-                  ? "var(--success-dim)"
-                  : bet.yesPct <= 40
-                  ? "var(--danger-dim)"
-                  : "var(--bg-subtle)",
-              color: statusColor,
+              background: pillBg,
+              color: pillFg,
               letterSpacing: "0.05em",
             }}
           >
-            {status}
+            {pillLabel}
           </span>
           <div className="text-right">
-            <div
-              className="font-mono font-medium"
-              style={{ fontSize: "14px", color: fill }}
-            >
+            <div className="font-mono font-medium" style={{ fontSize: "14px", color: fill }}>
               {bet.yesPct}%
             </div>
             <div className="text-[9px]" style={{ color: "var(--fg-dim)" }}>
@@ -442,9 +565,32 @@ function BetRow({ bet }: { bet: PolymarketBet }) {
         <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>
           {bet.signalNote}
         </span>
-        <span className="font-mono text-[10px]" style={{ color: "var(--fg-dim)" }}>
-          {formatUsd(bet.volumeUsd)} · 24h
-        </span>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span
+            className="font-mono text-[10px]"
+            style={{ color: "var(--fg-dim)" }}
+          >
+            {formatUsd(bet.volumeUsd)}
+          </span>
+          {bet.link && (
+            <a
+              href={bet.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="px-2 py-0.5 rounded font-mono"
+              style={{
+                background: "var(--bg-subtle)",
+                color: "var(--accent-soft)",
+                border: "1px solid var(--border-accent)",
+                fontSize: "10px",
+                letterSpacing: "0.05em",
+                textDecoration: "none",
+              }}
+            >
+              OPEN ↗
+            </a>
+          )}
+        </div>
       </div>
     </div>
   );

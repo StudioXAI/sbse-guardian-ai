@@ -68,6 +68,10 @@ export interface PolymarketBet {
   /** Our directional read of this bet. */
   signalDirection: Direction;
   signalNote?: string;
+  /** Direct link to the market on polymarket.com */
+  link?: string;
+  /** Whether the market has settled. */
+  isClosed?: boolean;
 }
 
 export interface SocialPost {
