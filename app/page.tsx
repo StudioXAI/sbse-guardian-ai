@@ -5,6 +5,7 @@ import ScannerHero from "@/components/ScannerHero";
 import ScanProgress from "@/components/ScanProgress";
 import AuditReportView from "@/components/AuditReportView";
 import RecentScans, { addRecentScan } from "@/components/RecentScans";
+import SiteNav from "@/components/SiteNav";
 import type { AuditReport, AuditApiResponse } from "@/lib/types";
 import { CONTRACT_REGEX } from "@/lib/constants";
 
@@ -88,7 +89,6 @@ export default function Home() {
     setResult(null);
     setError(null);
     setContractAddress("");
-    /* Give React a tick to unmount the report before focusing */
     setTimeout(() => inputRef.current?.focus(), 100);
   };
 
@@ -99,51 +99,7 @@ export default function Home() {
 
   return (
     <main className="min-h-screen">
-      {/* Nav */}
-      <nav
-        className="sticky top-0 z-50 backdrop-blur-xl border-b"
-        style={{
-          background: "rgba(10,8,7,0.75)",
-          borderColor: "var(--border)",
-        }}
-      >
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div
-              className="h-7 w-7 rounded-lg flex items-center justify-center relative"
-              style={{
-                background: "linear-gradient(135deg, var(--accent), var(--accent-soft))",
-                color: "#fff",
-                boxShadow: "0 0 16px rgba(108,99,255,0.35)",
-              }}
-              aria-hidden
-            >
-              <span className="text-sm leading-none font-semibold">S</span>
-            </div>
-            <span className="font-mono text-sm tracking-[0.1em]" style={{ color: "var(--fg)" }}>
-              SbSe <span style={{ color: "var(--fg-muted)" }}>Guardian</span>
-            </span>
-          </div>
-          <div className="hidden md:flex items-center gap-6 font-mono text-[10px] tracking-[0.3em] uppercase"
-               style={{ color: "var(--fg-dim)" }}>
-            <span>Mainnet</span>
-            <span
-              className="inline-flex items-center gap-2"
-              style={{ color: "var(--success)" }}
-            >
-              <span
-                className="inline-block h-1.5 w-1.5 rounded-full"
-                style={{
-                  background: "var(--success)",
-                  boxShadow: "0 0 8px rgba(74,222,128,0.6), 0 0 14px rgba(74,222,128,0.3)",
-                  animation: "pulse 2s ease-in-out infinite",
-                }}
-              />
-              Online
-            </span>
-          </div>
-        </div>
-      </nav>
+      <SiteNav active="scanner" />
 
       <div className="max-w-6xl mx-auto px-6 py-12 md:py-20">
         {mode === "empty" && (
@@ -171,17 +127,14 @@ export default function Home() {
         )}
       </div>
 
-      {/* Footer */}
       <footer className="mt-20 border-t" style={{ borderColor: "var(--border)" }}>
         <div className="max-w-6xl mx-auto px-6 py-8 flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <img
-              src="/logo.png"
-              alt="SbSe Guardian"
-              className="h-5 w-5 object-contain"
-            />
-            <p className="font-mono text-[10px] tracking-[0.3em] uppercase"
-               style={{ color: "var(--fg-dim)" }}>
+            <img src="/logo.png" alt="SbSe Guardian" className="h-5 w-5 object-contain" />
+            <p
+              className="font-mono text-[10px] tracking-[0.3em] uppercase"
+              style={{ color: "var(--fg-dim)" }}
+            >
               SbSe Guardian · Smart Contract Intelligence
             </p>
           </div>
