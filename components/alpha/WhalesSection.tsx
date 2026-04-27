@@ -34,15 +34,34 @@ export default function WhalesSection() {
             letterSpacing: "0.05em",
           }}
         >
-          $1M+ ONLY
+          $1M+ ONLY · USDT · USDC · WETH · WBTC
         </span>
       </div>
 
-      {whales === null ? (
+      {whales === null && (
         <div className="text-sm" style={{ color: "var(--fg-dim)" }}>
           Loading whale feed…
         </div>
-      ) : (
+      )}
+
+      {whales && whales.length === 0 && (
+        <div className="p-4 rounded-lg" style={{ background: "var(--bg-elevated)" }}>
+          <div
+            className="font-mono text-[11px] mb-2"
+            style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
+          >
+            NO MOVEMENTS · LAST FEW HOURS
+          </div>
+          <p className="text-[13px]" style={{ color: "var(--fg-muted)" }}>
+            No $1M+ stablecoin or major-asset transfers on the tracked exchange
+            wallets recently. The feed scans Binance, Coinbase Prime, Kraken,
+            and Bitfinex hot/cold wallets every 90 seconds — large moves will
+            appear here as they happen.
+          </p>
+        </div>
+      )}
+
+      {whales && whales.length > 0 && (
         <div className="space-y-2">
           {whales.map((w) => {
             const fill = directionFillVar(w.direction);
@@ -70,8 +89,12 @@ export default function WhalesSection() {
                   >
                     {w.address}
                   </div>
-                  <div className="text-[12px] mt-0.5" style={{ color: "var(--fg-muted)" }}>
-                    {w.action} · <span className="font-mono">{timeAgo(w.timestamp)}</span>
+                  <div
+                    className="text-[12px] mt-0.5"
+                    style={{ color: "var(--fg-muted)" }}
+                  >
+                    {w.action} ·{" "}
+                    <span className="font-mono">{timeAgo(w.timestamp)}</span>
                   </div>
                 </div>
                 <div className="text-right flex-shrink-0">

@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import type { PolymarketBet } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
+import { directionFillVar } from "./DirectionBadge";
 import { formatUsd } from "@/lib/alpha/format";
-import DirectionBadge from "./DirectionBadge";
 
 export default function PolymarketSection() {
   const [bets, setBets] = useState<PolymarketBet[] | null>(null);
@@ -21,62 +21,120 @@ export default function PolymarketSection() {
   }, []);
 
   return (
-    <div>
-      <div className="label-sm mb-4" style={{ color: "var(--fg-muted)" }}>
-        Real-money prediction markets · consensus signals
+    <div className="card p-5">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+        <div className="label-sm" style={{ color: "var(--fg-muted)" }}>
+          Real-money prediction markets · consensus signals
+        </div>
+        <a
+          href="https://polymarket.com"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="px-2.5 py-1 rounded font-mono"
+          style={{
+            background: "var(--bg-subtle)",
+            color: "var(--fg-muted)",
+            border: "1px solid var(--border)",
+            fontSize: "10px",
+            letterSpacing: "0.05em",
+            textDecoration: "none",
+          }}
+        >
+          polymarket.com ↗
+        </a>
       </div>
 
-      {bets === null ? (
+      {bets === null && (
         <div className="text-sm" style={{ color: "var(--fg-dim)" }}>
-          Loading…
+          Loading Polymarket consensus…
         </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {bets.map((bet) => {
-            const noPct = 100 - bet.yesPct;
+      )}
+
+      {bets && bets.length === 0 && (
+        <div className="p-4 rounded-lg" style={{ background: "var(--bg-elevated)" }}>
+          <div
+            className="font-mono text-[11px] mb-2"
+            style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
+          >
+            NO HIGH-VOLUME MARKETS RIGHT NOW
+          </div>
+          <p className="text-[13px]" style={{ color: "var(--fg-muted)" }}>
+            Polymarket returned no active markets above the $50K volume
+            threshold. This usually clears up within a few minutes — refresh to
+            try again.
+          </p>
+        </div>
+      )}
+
+      {bets && bets.length > 0 && (
+        <div className="space-y-3">
+          {bets.map((b) => {
+            const fill = directionFillVar(b.signalDirection);
+            const borderColor =
+              b.signalDirection === "bullish"
+                ? "var(--success)"
+                : b.signalDirection === "bearish"
+                ? "var(--danger)"
+                : "var(--accent)";
             return (
-              <div key={bet.id} className="card p-4">
-                <div className="flex items-start justify-between gap-2 mb-3">
+              <div
+                key={b.id}
+                className="p-4 rounded-lg"
+                style={{
+                  background: "var(--bg-elevated)",
+                  borderLeft: `3px solid ${borderColor}`,
+                }}
+              >
+                <div className="flex items-start justify-between gap-3 mb-2">
                   <p
                     className="text-[13px] font-medium leading-snug flex-1"
                     style={{ color: "var(--fg)" }}
                   >
-                    {bet.question}
+                    {b.question}
                   </p>
-                  <DirectionBadge direction={bet.signalDirection} size="sm" />
+                  <div className="text-right flex-shrink-0">
+                    <div
+                      className="font-mono font-medium"
+                      style={{ fontSize: "16px", color: fill }}
+                    >
+                      {b.yesPct}%
+                    </div>
+                    <div
+                      className="text-[10px]"
+                      style={{ color: "var(--fg-dim)" }}
+                    >
+                      YES
+                    </div>
+                  </div>
                 </div>
 
                 <div
-                  className="flex h-[6px] rounded-full overflow-hidden mb-2"
+                  className="h-[3px] rounded-full mb-2"
                   style={{ background: "var(--border)" }}
                 >
-                  <div style={{ width: `${bet.yesPct}%`, background: "var(--success)" }} />
-                  <div style={{ width: `${noPct}%`, background: "var(--danger)" }} />
-                </div>
-
-                <div className="flex justify-between items-center text-[11px] mb-2">
-                  <span style={{ color: "var(--success)", fontWeight: 500 }}>
-                    YES {bet.yesPct}%
-                  </span>
-                  <span className="font-mono" style={{ color: "var(--fg-dim)" }}>
-                    {formatUsd(bet.volumeUsd)} bet
-                  </span>
-                  <span style={{ color: "var(--danger)", fontWeight: 500 }}>
-                    NO {noPct}%
-                  </span>
-                </div>
-
-                {bet.signalNote && (
-                  <p
-                    className="text-[11px] leading-snug pt-2 border-t"
+                  <div
+                    className="h-full rounded-full"
                     style={{
-                      color: "var(--fg-muted)",
-                      borderColor: "var(--border)",
+                      width: `${b.yesPct}%`,
+                      background: fill,
                     }}
+                  />
+                </div>
+
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span
+                    className="text-[11px]"
+                    style={{ color: "var(--fg-muted)" }}
                   >
-                    {bet.signalNote}
-                  </p>
-                )}
+                    {b.signalNote}
+                  </span>
+                  <span
+                    className="font-mono text-[10px]"
+                    style={{ color: "var(--fg-dim)" }}
+                  >
+                    {formatUsd(b.volumeUsd)} · 24h
+                  </span>
+                </div>
               </div>
             );
           })}

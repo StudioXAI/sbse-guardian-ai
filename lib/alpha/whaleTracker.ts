@@ -1,9 +1,11 @@
 /* ─────────────────────────────────────────────────────────────
    Live Whale Tracker via Etherscan
-   - Tracks well-known exchange / institutional wallets
-   - Surfaces transactions over $1M USD
-   - Uses existing ETHERSCAN_API_KEY env var
-   - 90-second cache (Etherscan rate limits + sane refresh rate)
+   - Uses the `tokentx` endpoint to capture ERC-20 transfers
+   - Tracks USDT, USDC (1:1 USD), WBTC (× BTC price), WETH (× ETH price)
+   - Most exchange wallet movement at the $1M+ level is in stablecoins,
+     not native ETH — using `txlist` (native ETH only) misses 99% of
+     real whale activity.
+   - 90-second cache.
    ───────────────────────────────────────────────────────────── */
 
 import { TtlCache } from "./cache";
@@ -15,9 +17,6 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 const cache = new TtlCache<WhaleMove[]>(CACHE_TTL_MS);
 
-/* Known exchange / institutional wallets we track for large flows.
-   These are public addresses widely documented as belonging to the
-   listed entity. Adding more addresses here scales the coverage. */
 interface KnownWallet {
   address: string;
   label: string;
@@ -31,50 +30,87 @@ const TRACKED_WALLETS: KnownWallet[] = [
   { address: "0x77696bb39917C91A0c3908D577d5e322095425cA", label: "Bitfinex" },
 ];
 
-interface EtherscanTx {
+interface PriceMap {
+  eth: number;
+  btc: number;
+}
+
+interface TokenInfo {
+  decimals: number;
+  symbol: string;
+  toUsd: (amount: number, prices: PriceMap) => number;
+}
+
+/* Tokens we know how to value. Contract addresses are lowercase
+   for easy comparison against Etherscan's response. */
+const TRACKED_TOKENS: Record<string, TokenInfo> = {
+  "0xdac17f958d2ee523a2206206994597c13d831ec7": {
+    decimals: 6,
+    symbol: "USDT",
+    toUsd: (amt) => amt,
+  },
+  "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48": {
+    decimals: 6,
+    symbol: "USDC",
+    toUsd: (amt) => amt,
+  },
+  "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2": {
+    decimals: 18,
+    symbol: "WETH",
+    toUsd: (amt, p) => amt * p.eth,
+  },
+  "0x2260fac5e5542a773aa44fbcfedf7c193bc2c599": {
+    decimals: 8,
+    symbol: "WBTC",
+    toUsd: (amt, p) => amt * p.btc,
+  },
+};
+
+interface EtherscanTokenTx {
   hash?: string;
   from?: string;
   to?: string;
   value?: string;
+  contractAddress?: string;
+  tokenSymbol?: string;
+  tokenDecimal?: string;
   timeStamp?: string;
-  blockNumber?: string;
 }
 
 interface EtherscanResponse {
   status?: string;
   message?: string;
-  result?: EtherscanTx[];
+  result?: EtherscanTokenTx[];
 }
 
 function shorten(addr: string): string {
+  if (!addr) return "";
   if (addr.length < 10) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-function classifyDirection(
-  tx: EtherscanTx,
-  trackedAddr: string,
-): { direction: Direction; action: string } {
-  const isInflow = (tx.to ?? "").toLowerCase() === trackedAddr.toLowerCase();
-  if (isInflow) {
-    return { direction: "neutral", action: "Inflow to exchange" };
-  }
+function classifyDirection(isInflow: boolean): {
+  direction: Direction;
+  action: string;
+} {
+  if (isInflow) return { direction: "neutral", action: "Inflow to exchange" };
   return { direction: "bullish", action: "Outflow from exchange" };
 }
 
-async function fetchTxsForWallet(
+async function fetchTokenTxsForWallet(
   wallet: KnownWallet,
   apiKey: string,
-  ethPrice: number,
+  prices: PriceMap,
 ): Promise<WhaleMove[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
     const url =
-      `${ETHERSCAN_API}?module=account&action=txlist` +
-      `&address=${wallet.address}&startblock=0&endblock=99999999` +
-      `&page=1&offset=20&sort=desc&apikey=${apiKey}`;
+      `${ETHERSCAN_API}?module=account&action=tokentx` +
+      `&address=${wallet.address}` +
+      `&page=1&offset=100&sort=desc` +
+      `&apikey=${apiKey}`;
 
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) return [];
@@ -83,24 +119,34 @@ async function fetchTxsForWallet(
     if (json.status !== "1" || !Array.isArray(json.result)) return [];
 
     const moves: WhaleMove[] = [];
-    for (const tx of json.result.slice(0, 10)) {
-      const valueWei = BigInt(tx.value ?? "0");
-      const valueEth = Number(valueWei) / 1e18;
-      const valueUsd = valueEth * ethPrice;
 
-      /* Only surface $1M+ transactions. */
-      if (valueUsd < 1_000_000) continue;
+    for (const tx of json.result.slice(0, 80)) {
+      const contractAddr = (tx.contractAddress ?? "").toLowerCase();
+      const token = TRACKED_TOKENS[contractAddr];
+      if (!token) continue;
 
+      const rawValue = BigInt(tx.value ?? "0");
+      /* Use the token's decimals. Etherscan also returns tokenDecimal,
+         but our hardcoded value is more authoritative. */
+      const tokenAmount = Number(rawValue) / Math.pow(10, token.decimals);
+      const usdValue = token.toUsd(tokenAmount, prices);
+
+      if (!Number.isFinite(usdValue) || usdValue < 1_000_000) continue;
+
+      const isInflow =
+        (tx.to ?? "").toLowerCase() === wallet.address.toLowerCase();
+      const cls = classifyDirection(isInflow);
+      const counterparty = isInflow ? tx.from : tx.to;
       const ts = tx.timeStamp ? parseInt(tx.timeStamp, 10) * 1000 : Date.now();
-      const cls = classifyDirection(tx, wallet.address);
-      const counterparty = cls.direction === "bullish" ? tx.to : tx.from;
 
       moves.push({
         id: tx.hash ?? `${wallet.address}-${ts}`,
-        address: counterparty ? shorten(counterparty) : shorten(wallet.address),
+        address: counterparty
+          ? shorten(counterparty)
+          : shorten(wallet.address),
         action: `${cls.action} · ${wallet.label}`,
-        amountUsd: Math.round(valueUsd),
-        asset: "ETH",
+        amountUsd: Math.round(usdValue),
+        asset: token.symbol,
         direction: cls.direction,
         timestamp: ts,
       });
@@ -114,20 +160,26 @@ async function fetchTxsForWallet(
   }
 }
 
-async function getEthPriceUsd(): Promise<number> {
+async function getPrices(): Promise<PriceMap> {
   const cgKey = process.env.COINGECKO_API_KEY;
-  const url = "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd";
+  const url =
+    "https://api.coingecko.com/api/v3/simple/price?ids=ethereum,bitcoin&vs_currencies=usd";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (cgKey) headers["x-cg-demo-api-key"] = cgKey;
 
   try {
     const res = await fetch(url, { headers });
-    if (!res.ok) return 3200;
-    const json = (await res.json()) as { ethereum?: { usd?: number } };
-    const price = json.ethereum?.usd;
-    return typeof price === "number" && price > 0 ? price : 3200;
+    if (!res.ok) return { eth: 3200, btc: 65000 };
+    const json = (await res.json()) as {
+      ethereum?: { usd?: number };
+      bitcoin?: { usd?: number };
+    };
+    return {
+      eth: json.ethereum?.usd ?? 3200,
+      btc: json.bitcoin?.usd ?? 65000,
+    };
   } catch {
-    return 3200;
+    return { eth: 3200, btc: 65000 };
   }
 }
 
@@ -138,12 +190,11 @@ export async function fetchLiveWhaleMoves(): Promise<WhaleMove[]> {
   const apiKey = process.env.ETHERSCAN_API_KEY;
   if (!apiKey) return [];
 
-  const ethPrice = await getEthPriceUsd();
+  const prices = await getPrices();
 
-  /* Hit each tracked wallet in parallel. Etherscan free tier
-     allows 5 req/sec which is fine for our small list. */
+  /* Hit each tracked wallet in parallel. */
   const results = await Promise.all(
-    TRACKED_WALLETS.map((w) => fetchTxsForWallet(w, apiKey, ethPrice))
+    TRACKED_WALLETS.map((w) => fetchTokenTxsForWallet(w, apiKey, prices)),
   );
 
   const all = results
@@ -156,7 +207,7 @@ export async function fetchLiveWhaleMoves(): Promise<WhaleMove[]> {
     return all;
   }
 
-  /* Fall back to last good cache if available. */
+  /* Fall back to last good cache. */
   const stale = cache.getStale("all");
   return stale ?? [];
 }
