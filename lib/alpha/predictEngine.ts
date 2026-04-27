@@ -9,6 +9,7 @@
 import { TtlCache } from "./cache";
 import { fetchMarketSnapshot } from "./marketPrices";
 import { fetchInfluencerSentiment } from "./influencerTracker";
+import { computeAltSeasonIndex } from "./altSeasonIndex";
 import type { AssetPrediction, Direction, PredictionResponse, Signal } from "./types";
 
 const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
@@ -114,12 +115,13 @@ async function callAnthropic(signals: Signal[]): Promise<RawPrediction | null> {
     text: s.text,
   }));
 
-  /* Fetch real prices and influencer sentiment in parallel so the AI
-     grounds targets in actual current spot levels and current
-     consensus from a curated private list of high-signal accounts. */
-  const [snapshot, influencerSentiment] = await Promise.all([
+  /* Fetch real prices, influencer sentiment, and alt season index in
+     parallel so the AI grounds targets in actual current spot levels
+     and current cross-asset context. */
+  const [snapshot, influencerSentiment, altSeason] = await Promise.all([
     fetchMarketSnapshot(),
     fetchInfluencerSentiment(),
+    computeAltSeasonIndex(),
   ]);
 
   const priceContext = snapshot
@@ -146,7 +148,13 @@ Use these as anchors for any target price you generate. Do not invent prices tha
 Treat this as an additional input, not a primary driver. Do not name accounts.`
     : "";
 
+  const altSeasonContext = altSeason
+    ? `Alt Season Index: ${altSeason.index}/100 (${altSeason.label}) — ${altSeason.altcoinsOutperforming} of ${altSeason.totalAltcoins} top altcoins outperforming BTC over 7 days. BTC 7d: ${altSeason.btcChange7dPct >= 0 ? "+" : ""}${altSeason.btcChange7dPct.toFixed(2)}%. Use this to calibrate alt-vs-BTC bias in your forecasts.`
+    : "";
+
   const userPrompt = `${priceContext}
+
+${altSeasonContext}
 
 ${influencerContext}
 

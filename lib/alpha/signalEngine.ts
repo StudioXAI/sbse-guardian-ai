@@ -10,6 +10,7 @@ import { TtlCache } from "./cache";
 import type { Signal, Direction } from "./types";
 import { fetchInfiProjects } from "../fetchInfiProjects";
 import { fetchLiveWhaleMoves } from "./whaleTracker";
+import { fetchWhaleAlertMoves } from "./whaleAlertClient";
 import { fetchLivePolymarketBets } from "./polymarketClient";
 import { liquiditySignals as fetchLiquiditySignals } from "./liquidityClient";
 import { formatUsd } from "./format";
@@ -18,8 +19,21 @@ const cache = new TtlCache<Signal[]>(60_000);
 
 async function whaleSignals(): Promise<Signal[]> {
   try {
-    const whales = await fetchLiveWhaleMoves();
-    return whales.slice(0, 5).map((w) => ({
+    /* Pull both Etherscan-tracked exchange wallets AND Whale Alert
+       (when configured). Merge, dedup by id, sort by recency. */
+    const [etherscan, whaleAlert] = await Promise.all([
+      fetchLiveWhaleMoves(),
+      fetchWhaleAlertMoves(),
+    ]);
+    const seen = new Set<string>();
+    const merged = [];
+    for (const w of [...etherscan, ...whaleAlert]) {
+      if (seen.has(w.id)) continue;
+      seen.add(w.id);
+      merged.push(w);
+    }
+    merged.sort((a, b) => b.timestamp - a.timestamp);
+    return merged.slice(0, 8).map((w) => ({
       id: `whale-${w.id}`,
       source: "WHALE" as const,
       text: `${w.action}: ${formatUsd(w.amountUsd)} ${w.asset}`,

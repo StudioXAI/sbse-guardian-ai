@@ -5,6 +5,7 @@ import type { PredictionResponse } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
 import PredictionCard from "./PredictionCard";
 import MarketTable from "./MarketTable";
+import AltSeasonGauge from "./AltSeasonGauge";
 import type { CryptoRow, StockRow } from "@/lib/alpha/topMarketsClient";
 
 interface MarketsResp {
@@ -116,6 +117,9 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
       {/* AI Predictions tab */}
       {(freeMode || tab === "ai") && (
         <>
+          {/* Alt Season Index — paid users only, full feature. */}
+          {!freeMode && <AltSeasonGauge />}
+
           <div
             className="card p-5"
             style={{ borderLeft: "3px solid var(--accent)" }}
