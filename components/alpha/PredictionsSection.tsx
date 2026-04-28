@@ -192,8 +192,8 @@ export default function PredictionsSection() {
             />
           ) : (
             <FallbackPanel
-              title="Top 50 crypto temporarily computing"
-              body="Our primary market-data feed is rate-limited right now and the fallback feed is initializing. Live data will populate within a few minutes — try the AI Predictions tab in the meantime, which has its own real-time signal grounding."
+              title="Top 50 crypto loading"
+              body="Live market data is fetching. Refresh in a moment if this persists."
               showRetry
               onRetry={load}
             />
@@ -213,8 +213,8 @@ export default function PredictionsSection() {
             />
           ) : (
             <FallbackPanel
-              title="Top 50 stocks temporarily computing"
-              body="The stocks feed sometimes restricts based on serverless region. The fallback path is active — check back in 2-3 minutes. Crypto data and AI Predictions are unaffected."
+              title="Top 50 stocks loading"
+              body="Live stock data is fetching. Refresh in a moment if this persists."
               showRetry
               onRetry={load}
             />

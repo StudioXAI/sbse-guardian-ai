@@ -22,32 +22,14 @@ export default function AltSeasonGauge() {
     };
   }, []);
 
-  if (loading) {
-    return (
-      <div className="card p-5">
-        <div className="text-sm" style={{ color: "var(--fg-dim)" }}>
-          Computing Alt Season Index…
-        </div>
-      </div>
-    );
-  }
+  /* Hide entirely while loading — the rest of the predictions tab has
+     content that loads in parallel so there's no empty UI. */
+  if (loading) return null;
 
-  if (!data) {
-    return (
-      <div
-        className="card p-5"
-        style={{ borderLeft: "3px solid var(--warning)" }}
-      >
-        <div className="label-xs mb-2" style={{ color: "var(--warning)" }}>
-          Alt Season Index temporarily computing
-        </div>
-        <p className="text-sm leading-relaxed" style={{ color: "var(--fg-muted)" }}>
-          The top-50 market feed is rate-limited right now. The fallback path
-          is active and the index will populate within a couple of minutes.
-        </p>
-      </div>
-    );
-  }
+  /* If data is unavailable, render nothing — the rest of the predictions
+     tab has the AI summary and prediction cards which always work, so
+     this gauge silently hides instead of showing a scary error. */
+  if (!data) return null;
 
   const accent =
     data.label === "Alt Season"

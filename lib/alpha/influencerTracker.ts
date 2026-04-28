@@ -61,7 +61,7 @@ export interface InfluencerSentiment {
   generatedAt: number;
 }
 
-const cache = new TtlCache<InfluencerSentiment | null>(CACHE_TTL_MS);
+const cache = new TtlCache<InfluencerSentiment>(CACHE_TTL_MS);
 
 interface XUserResp {
   data?: { id?: string };
@@ -193,7 +193,7 @@ export async function fetchInfluencerSentiment(): Promise<InfluencerSentiment | 
   if (!token) return null;
 
   const cached = cache.get("agg");
-  if (cached !== undefined) return cached;
+  if (cached) return cached;
 
   const allScored: ScoredPost[] = [];
   let highConvictionFlag = false;
@@ -228,7 +228,6 @@ export async function fetchInfluencerSentiment(): Promise<InfluencerSentiment | 
   }
 
   if (allScored.length === 0) {
-    cache.set("agg", null);
     return null;
   }
 

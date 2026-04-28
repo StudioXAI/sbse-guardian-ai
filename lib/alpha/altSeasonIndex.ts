@@ -51,7 +51,7 @@ export interface AltSeasonData {
   generatedAt: number;
 }
 
-const cache = new TtlCache<AltSeasonData | null>(CACHE_TTL_MS);
+const cache = new TtlCache<AltSeasonData>(CACHE_TTL_MS);
 
 function labelFor(index: number): SeasonLabel {
   if (index >= 75) return "Alt Season";
@@ -63,19 +63,17 @@ function labelFor(index: number): SeasonLabel {
 
 export async function computeAltSeasonIndex(): Promise<AltSeasonData | null> {
   const cached = cache.get("index");
-  if (cached !== undefined) return cached;
+  if (cached) return cached;
 
   const coins = await fetchTop50Crypto();
   if (coins.length === 0) {
-    cache.set("index", null);
+    /* Don't cache the null — try again next call so transient failures
+       don't lock us out for 5 minutes. */
     return null;
   }
 
   const btc = coins.find((c) => c.symbol.toLowerCase() === "btc");
-  if (!btc) {
-    cache.set("index", null);
-    return null;
-  }
+  if (!btc) return null;
   const btcChange = btc.change7dPct;
 
   /* Filter to qualifying altcoins. */
@@ -84,10 +82,7 @@ export async function computeAltSeasonIndex(): Promise<AltSeasonData | null> {
     return !BTC_PROXIES.has(sym) && !STABLECOINS.has(sym);
   });
 
-  if (altcoins.length === 0) {
-    cache.set("index", null);
-    return null;
-  }
+  if (altcoins.length === 0) return null;
 
   const outperformers = altcoins.filter((a) => a.change7dPct > btcChange);
   const index = Math.round((outperformers.length / altcoins.length) * 100);
