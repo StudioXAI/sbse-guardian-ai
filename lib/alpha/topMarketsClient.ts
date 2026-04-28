@@ -1,7 +1,7 @@
 /* ─────────────────────────────────────────────────────────────
    Top Markets — top 50 crypto + top 50 stocks
-   Crypto fallback chain: CoinGecko → CoinPaprika → CoinCap
-   Stocks: Stooq CSV (works from cloud IPs, no auth)
+   Crypto chain: CoinGecko → CoinPaprika → CoinCap
+   Stocks chain: Finnhub (if FINNHUB_API_KEY set) → Stooq CSV
    5-minute cache.
    ───────────────────────────────────────────────────────────── */
 
@@ -36,7 +36,9 @@ export interface StockRow {
 const cryptoCache = new TtlCache<CryptoRow[]>(CACHE_TTL_MS);
 const stockCache = new TtlCache<StockRow[]>(CACHE_TTL_MS);
 
-/* ─── Crypto: CoinGecko (primary) ─── */
+/* ═══════════════════════════════════════════════════════════ */
+/* CRYPTO — three-tier fallback                                */
+/* ═══════════════════════════════════════════════════════════ */
 
 interface CGCoin {
   id?: string;
@@ -69,9 +71,7 @@ async function fetchFromCoinGecko(): Promise<CryptoRow[]> {
     if (!res.ok) return [];
 
     const raw = await res.json();
-    /* CoinGecko's free tier sometimes returns 200 with an error object
-       like {status:{error_code:429,...}} when rate-limited. Detect this
-       and treat as a failure so the fallback path engages. */
+    /* CoinGecko free tier sometimes returns 200 with {status:{error_code:429}}. */
     if (!Array.isArray(raw)) return [];
     const json = raw as CGCoin[];
 
@@ -96,8 +96,6 @@ async function fetchFromCoinGecko(): Promise<CryptoRow[]> {
   }
 }
 
-/* ─── Crypto: CoinPaprika (fallback) ─── */
-
 interface PaprikaTicker {
   id?: string;
   name?: string;
@@ -119,8 +117,6 @@ async function fetchFromCoinPaprika(): Promise<CryptoRow[]> {
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
-    /* Note: /v1/tickers returns ~5000 results. The `limit` param is
-       unsupported on the free tier — we slice client-side after sort. */
     const res = await fetch("https://api.coinpaprika.com/v1/tickers", {
       signal: controller.signal,
       headers: { Accept: "application/json" },
@@ -130,7 +126,6 @@ async function fetchFromCoinPaprika(): Promise<CryptoRow[]> {
     const json = await res.json();
     if (!Array.isArray(json)) return [];
 
-    /* Sort by rank (asc) and take top 50. Some entries are missing rank. */
     const sorted = (json as PaprikaTicker[])
       .filter(
         (t) =>
@@ -162,8 +157,6 @@ async function fetchFromCoinPaprika(): Promise<CryptoRow[]> {
   }
 }
 
-/* ─── Crypto: CoinCap (last-resort fallback) ─── */
-
 interface CoinCapAsset {
   id?: string;
   rank?: string;
@@ -190,9 +183,6 @@ async function fetchFromCoinCap(): Promise<CryptoRow[]> {
     const data = raw?.data;
     if (!Array.isArray(data)) return [];
 
-    /* CoinCap doesn't provide 7d change directly. We approximate by
-       using 24h change as a proxy — better than nothing. The Alt Season
-       Index will fall back gracefully if 7d data is missing. */
     return (data as CoinCapAsset[])
       .filter(
         (a) => a.id && a.symbol && a.priceUsd && parseFloat(a.priceUsd) > 0,
@@ -206,7 +196,7 @@ async function fetchFromCoinCap(): Promise<CryptoRow[]> {
           name: a.name ?? "",
           priceUsd: parseFloat(a.priceUsd ?? "0"),
           change24hPct: change24h,
-          change7dPct: change24h, // approximation
+          change7dPct: change24h, // 7d not available, approximate with 24h
           marketCapUsd: parseFloat(a.marketCapUsd ?? "0"),
           volume24hUsd: parseFloat(a.volumeUsd24Hr ?? "0"),
           imageUrl: undefined,
@@ -223,7 +213,6 @@ export async function fetchTop50Crypto(): Promise<CryptoRow[]> {
   const cached = cryptoCache.get("top50");
   if (cached) return cached;
 
-  /* Try each source in order. The first one that returns ≥10 rows wins. */
   let rows = await fetchFromCoinGecko();
   if (rows.length < 10) rows = await fetchFromCoinPaprika();
   if (rows.length < 10) rows = await fetchFromCoinCap();
@@ -235,78 +224,130 @@ export async function fetchTop50Crypto(): Promise<CryptoRow[]> {
   return cryptoCache.getStale("top50") ?? [];
 }
 
-/* ─── Stocks: Stooq CSV ─── */
-/* Stooq returns CSV from query.stooq.com — works from cloud IPs without
-   any User-Agent gymnastics. Format: Symbol,Date,Time,Open,High,Low,Close,Volume.
-   We use Close as price and Open as basis for 24h change.
-   Note: Stooq does NOT return market cap, so we approximate by ranking
-   based on a hardcoded list (large-cap order is reasonably stable). */
+/* ═══════════════════════════════════════════════════════════ */
+/* STOCKS — Finnhub (if key) → Stooq fallback                  */
+/* ═══════════════════════════════════════════════════════════ */
 
 const TOP_STOCK_SYMBOLS: Array<{ symbol: string; name: string }> = [
-  { symbol: "aapl", name: "Apple" },
-  { symbol: "msft", name: "Microsoft" },
-  { symbol: "nvda", name: "NVIDIA" },
-  { symbol: "googl", name: "Alphabet" },
-  { symbol: "amzn", name: "Amazon" },
-  { symbol: "meta", name: "Meta Platforms" },
-  { symbol: "tsla", name: "Tesla" },
-  { symbol: "brk-b", name: "Berkshire Hathaway" },
-  { symbol: "lly", name: "Eli Lilly" },
-  { symbol: "jpm", name: "JPMorgan Chase" },
-  { symbol: "avgo", name: "Broadcom" },
-  { symbol: "wmt", name: "Walmart" },
-  { symbol: "v", name: "Visa" },
-  { symbol: "xom", name: "Exxon Mobil" },
-  { symbol: "unh", name: "UnitedHealth" },
-  { symbol: "ma", name: "Mastercard" },
-  { symbol: "jnj", name: "Johnson & Johnson" },
-  { symbol: "pg", name: "Procter & Gamble" },
-  { symbol: "orcl", name: "Oracle" },
-  { symbol: "hd", name: "Home Depot" },
-  { symbol: "cost", name: "Costco" },
-  { symbol: "abbv", name: "AbbVie" },
-  { symbol: "bac", name: "Bank of America" },
-  { symbol: "cvx", name: "Chevron" },
-  { symbol: "mrk", name: "Merck" },
-  { symbol: "ko", name: "Coca-Cola" },
-  { symbol: "amd", name: "AMD" },
-  { symbol: "pep", name: "PepsiCo" },
-  { symbol: "crm", name: "Salesforce" },
-  { symbol: "adbe", name: "Adobe" },
-  { symbol: "wfc", name: "Wells Fargo" },
-  { symbol: "mcd", name: "McDonald's" },
-  { symbol: "tmo", name: "Thermo Fisher" },
-  { symbol: "csco", name: "Cisco" },
-  { symbol: "abt", name: "Abbott Laboratories" },
-  { symbol: "acn", name: "Accenture" },
-  { symbol: "lin", name: "Linde" },
-  { symbol: "dis", name: "Disney" },
-  { symbol: "tmus", name: "T-Mobile US" },
-  { symbol: "intc", name: "Intel" },
-  { symbol: "nflx", name: "Netflix" },
-  { symbol: "pm", name: "Philip Morris" },
-  { symbol: "dhr", name: "Danaher" },
-  { symbol: "vz", name: "Verizon" },
-  { symbol: "intu", name: "Intuit" },
-  { symbol: "cmcsa", name: "Comcast" },
-  { symbol: "qcom", name: "Qualcomm" },
-  { symbol: "ibm", name: "IBM" },
-  { symbol: "txn", name: "Texas Instruments" },
-  { symbol: "amgn", name: "Amgen" },
+  { symbol: "AAPL", name: "Apple" },
+  { symbol: "MSFT", name: "Microsoft" },
+  { symbol: "NVDA", name: "NVIDIA" },
+  { symbol: "GOOGL", name: "Alphabet" },
+  { symbol: "AMZN", name: "Amazon" },
+  { symbol: "META", name: "Meta Platforms" },
+  { symbol: "TSLA", name: "Tesla" },
+  { symbol: "BRK-B", name: "Berkshire Hathaway" },
+  { symbol: "LLY", name: "Eli Lilly" },
+  { symbol: "JPM", name: "JPMorgan Chase" },
+  { symbol: "AVGO", name: "Broadcom" },
+  { symbol: "WMT", name: "Walmart" },
+  { symbol: "V", name: "Visa" },
+  { symbol: "XOM", name: "Exxon Mobil" },
+  { symbol: "UNH", name: "UnitedHealth" },
+  { symbol: "MA", name: "Mastercard" },
+  { symbol: "JNJ", name: "Johnson & Johnson" },
+  { symbol: "PG", name: "Procter & Gamble" },
+  { symbol: "ORCL", name: "Oracle" },
+  { symbol: "HD", name: "Home Depot" },
+  { symbol: "COST", name: "Costco" },
+  { symbol: "ABBV", name: "AbbVie" },
+  { symbol: "BAC", name: "Bank of America" },
+  { symbol: "CVX", name: "Chevron" },
+  { symbol: "MRK", name: "Merck" },
+  { symbol: "KO", name: "Coca-Cola" },
+  { symbol: "AMD", name: "AMD" },
+  { symbol: "PEP", name: "PepsiCo" },
+  { symbol: "CRM", name: "Salesforce" },
+  { symbol: "ADBE", name: "Adobe" },
+  { symbol: "WFC", name: "Wells Fargo" },
+  { symbol: "MCD", name: "McDonald's" },
+  { symbol: "TMO", name: "Thermo Fisher" },
+  { symbol: "CSCO", name: "Cisco" },
+  { symbol: "ABT", name: "Abbott Laboratories" },
+  { symbol: "ACN", name: "Accenture" },
+  { symbol: "LIN", name: "Linde" },
+  { symbol: "DIS", name: "Disney" },
+  { symbol: "TMUS", name: "T-Mobile US" },
+  { symbol: "INTC", name: "Intel" },
+  { symbol: "NFLX", name: "Netflix" },
+  { symbol: "PM", name: "Philip Morris" },
+  { symbol: "DHR", name: "Danaher" },
+  { symbol: "VZ", name: "Verizon" },
+  { symbol: "INTU", name: "Intuit" },
+  { symbol: "CMCSA", name: "Comcast" },
+  { symbol: "QCOM", name: "Qualcomm" },
+  { symbol: "IBM", name: "IBM" },
+  { symbol: "TXN", name: "Texas Instruments" },
+  { symbol: "AMGN", name: "Amgen" },
 ];
+
+/* ─── Stocks: Finnhub (primary if key configured) ─── */
+
+interface FinnhubQuote {
+  c?: number; // current price
+  d?: number; // change
+  dp?: number; // change percent
+  h?: number; // high
+  l?: number; // low
+  o?: number; // open
+  pc?: number; // previous close
+}
+
+async function fetchOneFinnhub(
+  sym: { symbol: string; name: string },
+  apiKey: string,
+): Promise<StockRow | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    const res = await fetch(
+      `https://finnhub.io/api/v1/quote?symbol=${sym.symbol}&token=${apiKey}`,
+      { signal: controller.signal, headers: { Accept: "application/json" } },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as FinnhubQuote;
+    if (typeof json.c !== "number" || json.c <= 0) return null;
+    return {
+      rank: 0,
+      symbol: sym.symbol,
+      name: sym.name,
+      priceUsd: json.c,
+      change24hPct: json.dp ?? 0,
+      marketCapUsd: 0, // Finnhub /quote doesn't return market cap
+      exchange: "NASDAQ/NYSE",
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchFromFinnhub(): Promise<StockRow[]> {
+  const apiKey = process.env.FINNHUB_API_KEY;
+  if (!apiKey) return [];
+
+  /* Finnhub free tier: 60 calls/min. We have 50 symbols so we're under
+     the limit but parallelize to keep latency low. */
+  const results = await Promise.all(
+    TOP_STOCK_SYMBOLS.map((s) => fetchOneFinnhub(s, apiKey)),
+  );
+  return results
+    .filter((r): r is StockRow => r !== null)
+    .map((r, i) => ({ ...r, rank: i + 1 }));
+}
+
+/* ─── Stocks: Stooq CSV fallback ─── */
 
 interface StooqQuote {
   symbol: string;
   open: number;
-  high: number;
-  low: number;
   close: number;
-  volume: number;
 }
 
 function parseStooqCsv(csv: string): StooqQuote[] {
-  /* Stooq CSV header:
-     Symbol,Date,Time,Open,High,Low,Close,Volume */
+  /* With format param `f=sd2t2ohlcv` and header param `h`, Stooq returns:
+     Symbol,Date,Time,Open,High,Low,Close,Volume   (8 columns) */
   const lines = csv.split(/\r?\n/).filter((l) => l.trim());
   if (lines.length < 2) return [];
   const out: StooqQuote[] = [];
@@ -315,23 +356,21 @@ function parseStooqCsv(csv: string): StooqQuote[] {
     if (cols.length < 8) continue;
     const symbol = cols[0]?.toLowerCase().trim();
     const open = parseFloat(cols[3]);
-    const high = parseFloat(cols[4]);
-    const low = parseFloat(cols[5]);
     const close = parseFloat(cols[6]);
-    const volume = parseFloat(cols[7]);
     if (!symbol || !Number.isFinite(close) || close <= 0) continue;
-    /* Stooq returns "N/D" for closed-market periods. Skip rows where
-       open is invalid since we need it for the 24h change calc. */
     if (!Number.isFinite(open) || open <= 0) continue;
-    out.push({ symbol, open, high, low, close, volume });
+    out.push({ symbol, open, close });
   }
   return out;
 }
 
 async function fetchFromStooq(): Promise<StockRow[]> {
-  /* Stooq accepts batched symbols using `+` separator and `.us` suffix. */
-  const stooqSymbols = TOP_STOCK_SYMBOLS.map((s) => `${s.symbol}.us`).join("+");
-  const url = `https://stooq.com/q/l/?s=${stooqSymbols}&f=sohlcv&h&e=csv`;
+  const stooqSymbols = TOP_STOCK_SYMBOLS.map((s) =>
+    `${s.symbol.toLowerCase()}.us`,
+  ).join("+");
+  /* `f=sd2t2ohlcv` requests Symbol+Date+Time+OHLCV (8 cols). The `h`
+     flag includes a header row. */
+  const url = `https://stooq.com/q/l/?s=${stooqSymbols}&f=sd2t2ohlcv&h&e=csv`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -346,21 +385,17 @@ async function fetchFromStooq(): Promise<StockRow[]> {
     const quotes = parseStooqCsv(csv);
     if (quotes.length === 0) return [];
 
-    /* Build a lookup so we preserve the hardcoded order (which roughly
-       matches market cap rank). */
     const quoteMap = new Map(quotes.map((q) => [q.symbol, q]));
 
     const rows: StockRow[] = [];
     let rank = 1;
     for (const sym of TOP_STOCK_SYMBOLS) {
-      /* Stooq returns symbol as "aapl.us" — the `s` field. */
-      const q =
-        quoteMap.get(`${sym.symbol}.us`) ?? quoteMap.get(sym.symbol);
+      const q = quoteMap.get(`${sym.symbol.toLowerCase()}.us`);
       if (!q) continue;
       const change24hPct = ((q.close - q.open) / q.open) * 100;
       rows.push({
         rank: rank++,
-        symbol: sym.symbol.toUpperCase(),
+        symbol: sym.symbol,
         name: sym.name,
         priceUsd: q.close,
         change24hPct: Number.isFinite(change24hPct) ? change24hPct : 0,
@@ -380,7 +415,10 @@ export async function fetchTop50Stocks(): Promise<StockRow[]> {
   const cached = stockCache.get("top50");
   if (cached) return cached;
 
-  const rows = await fetchFromStooq();
+  /* Try Finnhub first if configured (most reliable). Fall back to Stooq. */
+  let rows = await fetchFromFinnhub();
+  if (rows.length < 10) rows = await fetchFromStooq();
+
   if (rows.length > 0) {
     stockCache.set("top50", rows);
     return rows;
