@@ -1,18 +1,15 @@
 "use client";
 
-/* ─────────────────────────────────────────────────────────────
-   Alpha page wrapper — defers the AppKit-using inner component
-   until after client mount so Vercel's prerender pass never
-   touches AppKit hooks (which throw before createAppKit runs).
-   ───────────────────────────────────────────────────────────── */
-
 import { useEffect, useState } from "react";
-import SiteNav from "@/components/SiteNav";
-import AlphaPageContent from "@/components/alpha/AlphaPageContent";
+import dynamic from "next/dynamic";
+
+const AlphaPageContent = dynamic(
+  () => import("@/components/alpha/AlphaPageContent"),
+  { ssr: false },
+);
 
 export default function AlphaPage() {
   const [mounted, setMounted] = useState(false);
-
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -20,18 +17,10 @@ export default function AlphaPage() {
   if (!mounted) {
     return (
       <main className="min-h-screen">
-        <SiteNav active="alpha" />
-        <div className="max-w-6xl mx-auto px-6 py-24 text-center">
-          <p
-            className="font-mono"
-            style={{
-              color: "var(--fg-dim)",
-              fontSize: "11px",
-              letterSpacing: "0.1em",
-            }}
-          >
-            LOADING ALPHA…
-          </p>
+        <div className="max-w-6xl mx-auto px-6 py-12 md:py-16">
+          <div className="text-sm" style={{ color: "var(--fg-dim)" }}>
+            Loading Alpha…
+          </div>
         </div>
       </main>
     );

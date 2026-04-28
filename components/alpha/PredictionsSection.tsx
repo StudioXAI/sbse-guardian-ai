@@ -14,15 +14,10 @@ interface MarketsResp {
   generatedAt: number;
 }
 
-interface Props {
-  freeMode?: boolean;
-  onUpgrade?: () => void;
-}
-
-export default function PredictionsSection({ freeMode = false, onUpgrade }: Props) {
+export default function PredictionsSection() {
   const [data, setData] = useState<PredictionResponse | null>(null);
   const [markets, setMarkets] = useState<MarketsResp | null>(null);
-  const [marketsErr, setMarketsErr] = useState(false);
+  const [, setMarketsErr] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"ai" | "crypto" | "stocks">("ai");
@@ -55,82 +50,48 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
 
   return (
     <div className="space-y-5">
-      {freeMode && (
-        <div
-          className="card p-3 flex items-center justify-between gap-3 flex-wrap"
-          style={{ borderLeft: "3px solid var(--accent)" }}
-        >
-          <div className="text-[12px]" style={{ color: "var(--fg-muted)" }}>
-            <span style={{ color: "var(--accent-soft)" }}>Free preview</span> ·
-            AI summary only. Upgrade for multi-asset cards, multi-timeframe
-            BTC, the Alt Season Index, and full Top 50 crypto/stock tables.
-          </div>
-          {onUpgrade && (
-            <button
-              type="button"
-              onClick={onUpgrade}
-              className="px-3 py-1 rounded-md transition-colors"
-              style={{
-                background: "var(--accent-dim)",
-                color: "var(--accent-soft)",
-                fontSize: "11px",
-                fontWeight: 500,
-                border: "1px solid var(--border-accent)",
-                cursor: "pointer",
-              }}
+      {/* Sub-tabs */}
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            { id: "ai", label: "AI Predictions", sub: "Multi-asset · Multi-timeframe" },
+            { id: "crypto", label: "Top 50 Crypto", sub: "By market cap · live" },
+            { id: "stocks", label: "Top 50 Stocks", sub: "US large-cap · live" },
+          ] as const
+        ).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className="px-3 py-2 rounded-md text-left transition-colors"
+            style={{
+              background: t.id === tab ? "var(--accent-dim)" : "var(--bg-subtle)",
+              border:
+                t.id === tab
+                  ? "1px solid var(--border-accent)"
+                  : "1px solid var(--border)",
+              color: t.id === tab ? "var(--accent-soft)" : "var(--fg-muted)",
+              cursor: "pointer",
+            }}
+          >
+            <div
+              className="font-mono"
+              style={{ fontSize: "11px", letterSpacing: "0.06em" }}
             >
-              Upgrade
-            </button>
-          )}
-        </div>
-      )}
+              {t.label}
+            </div>
+            <div className="text-[10px] mt-0.5" style={{ color: "var(--fg-dim)" }}>
+              {t.sub}
+            </div>
+          </button>
+        ))}
+      </div>
 
-      {/* Sub-tabs for paid users. */}
-      {!freeMode && (
-        <div className="flex flex-wrap gap-2">
-          {(
-            [
-              { id: "ai", label: "AI Predictions", sub: "Multi-asset · Multi-timeframe" },
-              { id: "crypto", label: "Top 50 Crypto", sub: "By market cap · live" },
-              { id: "stocks", label: "Top 50 Stocks", sub: "US large-cap · live" },
-            ] as const
-          ).map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className="px-3 py-2 rounded-md text-left transition-colors"
-              style={{
-                background: t.id === tab ? "var(--accent-dim)" : "var(--bg-subtle)",
-                border:
-                  t.id === tab
-                    ? "1px solid var(--border-accent)"
-                    : "1px solid var(--border)",
-                color: t.id === tab ? "var(--accent-soft)" : "var(--fg-muted)",
-                cursor: "pointer",
-              }}
-            >
-              <div
-                className="font-mono"
-                style={{ fontSize: "11px", letterSpacing: "0.06em" }}
-              >
-                {t.label}
-              </div>
-              <div className="text-[10px] mt-0.5" style={{ color: "var(--fg-dim)" }}>
-                {t.sub}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* AI Predictions tab — always populates with the AI summary even when
-          market data failed, so this tab is never empty. */}
-      {(freeMode || tab === "ai") && (
+      {/* AI Predictions tab */}
+      {tab === "ai" && (
         <>
-          {/* Alt Season Index — always rendered for paid; falls back gracefully
-              if data is unavailable (the gauge component handles its own empty state). */}
-          {!freeMode && <AltSeasonGauge />}
+          {/* Alt Season Index — always rendered. */}
+          <AltSeasonGauge />
 
           <div
             className="card p-5"
@@ -185,7 +146,7 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
             )}
           </div>
 
-          {!freeMode && data && data.shortHorizon.length > 0 && (
+          {data && data.shortHorizon.length > 0 && (
             <div>
               <div className="label-sm mb-3" style={{ color: "var(--fg-muted)" }}>
                 Short-horizon (1–2h) · all assets
@@ -201,7 +162,7 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
             </div>
           )}
 
-          {!freeMode && data && data.btcMultiTimeframe.length > 0 && (
+          {data && data.btcMultiTimeframe.length > 0 && (
             <div>
               <div className="label-sm mb-3" style={{ color: "var(--fg-muted)" }}>
                 BTC · multi-timeframe
@@ -220,7 +181,7 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
       )}
 
       {/* Top 50 Crypto */}
-      {!freeMode && tab === "crypto" && (
+      {tab === "crypto" && (
         <>
           {markets && markets.crypto.length > 0 ? (
             <MarketTable
@@ -241,7 +202,7 @@ export default function PredictionsSection({ freeMode = false, onUpgrade }: Prop
       )}
 
       {/* Top 50 Stocks */}
-      {!freeMode && tab === "stocks" && (
+      {tab === "stocks" && (
         <>
           {markets && markets.stocks.length > 0 ? (
             <MarketTable

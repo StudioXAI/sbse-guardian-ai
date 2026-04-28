@@ -5,16 +5,7 @@ import type { Signal } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
 import SignalRow from "./SignalRow";
 
-interface Props {
-  /** When true, applies free-tier limits: 3 signals max, 1-hour delay. */
-  freeMode?: boolean;
-  onUpgrade?: () => void;
-}
-
-const FREE_DELAY_MS = 60 * 60 * 1000; // 1 hour
-const FREE_MAX_SIGNALS = 3;
-
-export default function SignalsSection({ freeMode = false, onUpgrade }: Props) {
+export default function SignalsSection() {
   const [market, setMarket] = useState<Signal[] | null>(null);
   const [infi, setInfi] = useState<Signal[] | null>(null);
 
@@ -26,58 +17,17 @@ export default function SignalsSection({ freeMode = false, onUpgrade }: Props) {
         alphaGet<Signal[]>("/api/alpha/signals?filter=infi"),
       ]);
       if (cancelled) return;
-
-      if (freeMode) {
-        const cutoff = Date.now() - FREE_DELAY_MS;
-        setMarket(
-          (m ?? []).filter((s) => s.timestamp <= cutoff).slice(0, FREE_MAX_SIGNALS),
-        );
-        setInfi(
-          (i ?? []).filter((s) => s.timestamp <= cutoff).slice(0, FREE_MAX_SIGNALS),
-        );
-      } else {
-        setMarket(m ?? []);
-        setInfi(i ?? []);
-      }
+      setMarket(m ?? []);
+      setInfi(i ?? []);
     }
     void load();
     return () => {
       cancelled = true;
     };
-  }, [freeMode]);
+  }, []);
 
   return (
     <div className="space-y-4">
-      {freeMode && (
-        <div
-          className="card p-3 flex items-center justify-between gap-3 flex-wrap"
-          style={{ borderLeft: "3px solid var(--accent)" }}
-        >
-          <div className="text-[12px]" style={{ color: "var(--fg-muted)" }}>
-            <span style={{ color: "var(--accent-soft)" }}>Free preview</span> ·
-            showing 3 most-recent signals with 1-hour delay. Upgrade for the
-            full real-time feed.
-          </div>
-          {onUpgrade && (
-            <button
-              type="button"
-              onClick={onUpgrade}
-              className="px-3 py-1 rounded-md transition-colors"
-              style={{
-                background: "var(--accent-dim)",
-                color: "var(--accent-soft)",
-                fontSize: "11px",
-                fontWeight: 500,
-                border: "1px solid var(--border-accent)",
-                cursor: "pointer",
-              }}
-            >
-              Upgrade
-            </button>
-          )}
-        </div>
-      )}
-
       <div className="grid gap-4 md:grid-cols-2">
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
@@ -92,11 +42,7 @@ export default function SignalsSection({ freeMode = false, onUpgrade }: Props) {
                 letterSpacing: "0.05em",
               }}
             >
-              {market === null
-                ? "…"
-                : freeMode
-                ? `${market.length} (delayed)`
-                : `${market.length} live`}
+              {market === null ? "…" : `${market.length} live`}
             </span>
           </div>
           {market === null ? (

@@ -12,9 +12,7 @@ import PredictionCard from "./PredictionCard";
 import type { AlphaSection } from "./AlphaSubNav";
 
 interface Props {
-  freeMode?: boolean;
   onNavigate: (section: AlphaSection) => void;
-  onUpgrade?: () => void;
 }
 
 const STAT_DEFS: Array<{
@@ -22,18 +20,16 @@ const STAT_DEFS: Array<{
   key: keyof OverviewStats;
   format?: (n: number) => string;
   sub?: string;
-  paidOnly?: boolean;
 }> = [
   { label: "Signals", key: "signalsActive", sub: "active" },
-  { label: "Threats", key: "threatsBlocked24h", sub: "Last 24h", paidOnly: true },
+  { label: "Threats", key: "threatsBlocked24h", sub: "Last 24h" },
   {
     label: "Wallets",
     key: "walletsMonitored",
     format: (n) => n.toLocaleString(),
     sub: "Monitored",
-    paidOnly: true,
   },
-  { label: "Whales", key: "whalesToday", sub: "Today", paidOnly: true },
+  { label: "Whales", key: "whalesToday", sub: "Today" },
   {
     label: "Health",
     key: "ecosystemHealthPct",
@@ -42,11 +38,7 @@ const STAT_DEFS: Array<{
   },
 ];
 
-export default function OverviewSection({
-  freeMode = false,
-  onNavigate,
-  onUpgrade,
-}: Props) {
+export default function OverviewSection({ onNavigate }: Props) {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [topSignals, setTopSignals] = useState<Signal[] | null>(null);
   const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
@@ -61,21 +53,14 @@ export default function OverviewSection({
       ]);
       if (cancelled) return;
       if (overview) setStats(overview);
-      if (signals) {
-        if (freeMode) {
-          const cutoff = Date.now() - 60 * 60 * 1000;
-          setTopSignals(signals.filter((s) => s.timestamp <= cutoff).slice(0, 3));
-        } else {
-          setTopSignals(signals.slice(0, 5));
-        }
-      }
+      if (signals) setTopSignals(signals.slice(0, 5));
       if (predict) setPrediction(predict);
     }
     void load();
     return () => {
       cancelled = true;
     };
-  }, [freeMode]);
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -84,37 +69,17 @@ export default function OverviewSection({
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))" }}
       >
         {STAT_DEFS.map((def) => {
-          const isLocked = freeMode && def.paidOnly;
           const value = stats ? stats[def.key] : null;
-          const display = isLocked
-            ? "—"
-            : value === null
-            ? "—"
-            : def.format
-            ? def.format(value as number)
-            : String(value);
+          const display =
+            value === null
+              ? "—"
+              : def.format
+              ? def.format(value as number)
+              : String(value);
           return (
-            <div
-              key={def.label}
-              className="card p-4"
-              style={{ opacity: isLocked ? 0.5 : 1 }}
-            >
-              <div className="label-xs flex items-center gap-1.5" style={{ color: "var(--fg-dim)" }}>
+            <div key={def.label} className="card p-4">
+              <div className="label-xs" style={{ color: "var(--fg-dim)" }}>
                 {def.label}
-                {isLocked && (
-                  <svg
-                    width="10"
-                    height="10"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.5"
-                    aria-hidden
-                  >
-                    <rect width="18" height="11" x="3" y="11" rx="2" />
-                    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                  </svg>
-                )}
               </div>
               <div
                 className="font-medium mt-1.5"
@@ -129,7 +94,7 @@ export default function OverviewSection({
               </div>
               {def.sub && (
                 <div className="text-[11px] mt-1" style={{ color: "var(--fg-dim)" }}>
-                  {isLocked ? "Upgrade" : def.sub}
+                  {def.sub}
                 </div>
               )}
             </div>
@@ -148,16 +113,14 @@ export default function OverviewSection({
           <p className="text-[14px] leading-relaxed" style={{ color: "var(--fg)" }}>
             {prediction.summary}
           </p>
-          {!freeMode && (
-            <div
-              className="grid gap-2 mt-4"
-              style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
-            >
-              {prediction.shortHorizon.slice(0, 4).map((p) => (
-                <PredictionCard key={p.asset} prediction={p} />
-              ))}
-            </div>
-          )}
+          <div
+            className="grid gap-2 mt-4"
+            style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}
+          >
+            {prediction.shortHorizon.slice(0, 4).map((p) => (
+              <PredictionCard key={p.asset} prediction={p} />
+            ))}
+          </div>
         </div>
       )}
 
@@ -167,7 +130,7 @@ export default function OverviewSection({
             className="flex items-center justify-between mb-3 label-xs"
             style={{ color: "var(--fg-dim)" }}
           >
-            <span>Top signals{freeMode ? " · 1h delayed" : ""}</span>
+            <span>Top signals</span>
             <button
               type="button"
               onClick={() => onNavigate("signals")}
@@ -206,64 +169,38 @@ export default function OverviewSection({
           <div className="space-y-2">
             {(
               [
-                { id: "signals", label: "Browse signals", desc: freeMode ? "3 most-recent, 1h delayed" : "Live market + INFI feed", paidOnly: false },
-                { id: "predictions", label: "AI predictions", desc: freeMode ? "Summary only" : "Multi-asset forecast", paidOnly: false },
-                { id: "liquidity", label: "Liquidity map", desc: "DefiLlama, order book, Coinglass", paidOnly: true },
-                { id: "whales", label: "Whale tracker", desc: "$1M+ on-chain movements", paidOnly: true },
-                { id: "polymarket", label: "Polymarket bets", desc: "Real-money consensus", paidOnly: true },
-                { id: "infi", label: "INFI ecosystem", desc: "Status, channels, alerts", paidOnly: false },
-                { id: "social", label: "Social intel", desc: "X + LinkedIn", paidOnly: false },
+                { id: "signals", label: "Browse signals", desc: "Live market + INFI feed" },
+                { id: "predictions", label: "AI predictions", desc: "Multi-asset forecast" },
+                { id: "liquidity", label: "Liquidity map", desc: "TVL, order book, heatmap" },
+                { id: "whales", label: "Whale tracker", desc: "$100K+ on-chain movements" },
+                { id: "polymarket", label: "Polymarket bets", desc: "Real-money consensus" },
+                { id: "infi", label: "INFI ecosystem", desc: "Status, channels, alerts" },
+                { id: "social", label: "Social intel", desc: "Aggregated sentiment" },
               ] as const
-            ).map((a) => {
-              const locked = freeMode && a.paidOnly;
-              return (
-                <button
-                  key={a.id}
-                  type="button"
-                  onClick={() => {
-                    if (locked && onUpgrade) {
-                      onUpgrade();
-                    } else {
-                      onNavigate(a.id);
-                    }
-                  }}
-                  className="w-full text-left p-3 rounded-lg flex items-center justify-between transition-colors"
-                  style={{
-                    background: "var(--bg-subtle)",
-                    border: "1px solid var(--border)",
-                    color: "var(--fg)",
-                    opacity: locked ? 0.65 : 1,
-                  }}
-                >
-                  <span>
-                    <span className="block text-[13px] flex items-center gap-1.5">
-                      {a.label}
-                      {locked && (
-                        <svg
-                          width="11"
-                          height="11"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          aria-hidden
-                        >
-                          <rect width="18" height="11" x="3" y="11" rx="2" />
-                          <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-                        </svg>
-                      )}
-                    </span>
-                    <span
-                      className="block text-[11px] mt-0.5"
-                      style={{ color: "var(--fg-dim)" }}
-                    >
-                      {locked ? "Upgrade to unlock" : a.desc}
-                    </span>
+            ).map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                onClick={() => onNavigate(a.id)}
+                className="w-full text-left p-3 rounded-lg flex items-center justify-between transition-colors"
+                style={{
+                  background: "var(--bg-subtle)",
+                  border: "1px solid var(--border)",
+                  color: "var(--fg)",
+                }}
+              >
+                <span>
+                  <span className="block text-[13px]">{a.label}</span>
+                  <span
+                    className="block text-[11px] mt-0.5"
+                    style={{ color: "var(--fg-dim)" }}
+                  >
+                    {a.desc}
                   </span>
-                  <span style={{ color: "var(--accent-soft)" }}>→</span>
-                </button>
-              );
-            })}
+                </span>
+                <span style={{ color: "var(--accent-soft)" }}>→</span>
+              </button>
+            ))}
           </div>
         </div>
       </div>
