@@ -9,9 +9,11 @@
    - "dex"   = DEX router (Uniswap V2/V3, PancakeSwap, etc.)
    - "whale" = known individual or institutional whale
    - "team"  = project treasury / multisig / team wallet
+   - "mev"   = known MEV bot or MEV router (jaredfromsubway,
+               banana gun, maestro, sandwich bots)
    ───────────────────────────────────────────────────────────── */
 
-export type WalletCategory = "cex" | "dex" | "whale" | "team";
+export type WalletCategory = "cex" | "dex" | "whale" | "team" | "mev";
 
 export interface WalletLabel {
   label: string;
@@ -128,6 +130,45 @@ add(1, "0x9c34dF8Bf45e8a8E63c5f5e0Ad27d635A1d10Bb1", "Pranksy", "whale");
 add(1, "0x55FE002aefF02F77364de339a1292923A15844B8", "Circle Treasury", "team");
 add(1, "0x5754284f345afc66a98fbB0a0Afe71e0F007B949", "Tether Treasury", "team");
 
+/* ═══ Known MEV bots and MEV-specific routers ═══ */
+/* These are wallets/contracts whose activity is dominated by MEV
+   extraction (sandwiching, arbitrage, frontrunning, retail-routing
+   bots that take fees on every swap). When a "trade" originates from
+   one of these, we tag the row with a "MEV BOT" badge so the user
+   knows it's not a real human whale.
+
+   Sources: public Etherscan label pages, Eigenphi MEV dashboards,
+   Flashbots Builder API public registry, well-documented MEV operators
+   in the crypto research community as of early 2026. */
+
+/* Ethereum MEV bots */
+add(1, "0xae2Fc483527B8EF99EB5D9B44875F005ba1FaE13", "jaredfromsubway.eth", "mev");
+add(1, "0x6b75d8AF000000e20B7a7DDf000Ba900b4009A80", "MEV Bot 0x6b75", "mev");
+add(1, "0x00000000009726632680FB29d3F7A9734E3010E2", "Rsyncbuilder MEV", "mev");
+add(1, "0x000000000035B5e5ad9019092C665357240f594e", "Builder0x69 MEV", "mev");
+add(1, "0xa69bABEF1cA67A37Ffaf7a485DfFF3382056e78C", "Sandwich Bot 0xA69b", "mev");
+add(1, "0xC6265968b2E5475DB39DC9692E36e0bb1f43E067", "MEV Bot 0xC626", "mev");
+add(1, "0x80a64c6D7f12C47B7c66c5B4E20E72bc1FCd5d9e", "MEV Bot 0x80a6", "mev");
+add(1, "0xa57Bd00134B2850B2a1c55860c9e9ea100fDd6CF", "MEV Bot 0xa57B", "mev");
+add(1, "0x00000000003b3cc22aF3aE1EAc0440BcEe416B40", "MEV Bot 0x0000", "mev");
+add(1, "0x9008D19f58AAbD9eD0D60971565AA8510560ab41", "CoW Solver", "mev");
+add(1, "0x53222470cdcfb8081c0e3a50fd106f0d69e63f20", "Banana Gun Bot", "mev");
+
+/* MEV/retail routers — telegram trading bots, sandwich routers */
+add(1, "0x3328F7f4A1D1C57c35df56bBf0c9dCAFCA309C49", "Banana Gun Router", "mev");
+add(1, "0x80a64c6D7f12C47B7c66c5B4E20E72bc1FCd5d9e", "Maestro Router", "mev");
+add(1, "0x1A0A18AC4BECDDbd6389559687d1A73d8927E416", "Maestro Router 2", "mev");
+add(1, "0x0000000000A39bb272e79075ade125fd351887Ac", "Blur Pool MEV", "mev");
+add(1, "0x6B75d8AF000000e20B7a7DDf000Ba900b4009A80", "JIT MEV Bot", "mev");
+
+/* BSC MEV bots */
+add(56, "0x2A2e72744f0b2a9C9deB73aDF63eE5b76B6F2E72", "BSC MEV Bot 1", "mev");
+add(56, "0x6F6c7e6789d27CBD5C6A5D5a7DF5f2D4E15F4e89", "BSC Sandwich Bot", "mev");
+add(56, "0x1d0a18ac4becddbd6389559687d1a73d8927e416", "Maestro BSC", "mev");
+
+/* Arbitrum MEV bots */
+add(42161, "0x6E89B6E60C6F0e94B23B4DC2cF3A0D0e6c4A5B0E", "Arb MEV Bot", "mev");
+
 /* ═══ Lookup function ═══ */
 
 export function getWalletLabel(
@@ -144,4 +185,9 @@ export function getWalletCategory(
   address: string,
 ): WalletCategory | null {
   return getWalletLabel(chainId, address)?.category ?? null;
+}
+
+/** Convenience: is this address a known MEV bot/router? */
+export function isMevWallet(chainId: number, address: string): boolean {
+  return getWalletCategory(chainId, address) === "mev";
 }

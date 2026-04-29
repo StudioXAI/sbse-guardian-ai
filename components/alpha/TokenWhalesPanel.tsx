@@ -276,9 +276,20 @@ function TradeRow({
   const isBuy = trade.side === "buy";
   const valueColor = isBuy ? "var(--success)" : "var(--danger)";
   const sign = isBuy ? "+" : "−";
+  const actionWord = isBuy ? "BOUGHT" : "SOLD";
 
   /* Display label for the whale: prefer label, else shortened address. */
   const whaleDisplay = trade.whaleLabel ?? shorten(trade.whaleAddress);
+
+  /* Compact token amount, e.g. "1.2M", "487K", "234.5". */
+  const amountDisplay = formatTokenAmount(trade.amount);
+
+  /* Action pill colors — distinct from the USD value color but semantically aligned. */
+  const pillBg = isBuy ? "rgba(16,185,129,0.15)" : "rgba(239,68,68,0.15)";
+  const pillFg = isBuy ? "var(--success)" : "var(--danger)";
+  const pillBorder = isBuy
+    ? "1px solid rgba(16,185,129,0.35)"
+    : "1px solid rgba(239,68,68,0.35)";
 
   return (
     <div
@@ -288,24 +299,40 @@ function TradeRow({
         opacity: faded ? 0.65 : 1,
       }}
     >
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
+      {/* Top row: action pill + USD value */}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
           <span
-            className="font-mono text-[10px] px-1.5 py-0.5 rounded"
+            className="font-mono px-2 py-1 rounded"
             style={{
-              background: "var(--bg-subtle)",
-              color: "var(--accent-soft)",
-              letterSpacing: "0.05em",
+              background: pillBg,
+              color: pillFg,
+              border: pillBorder,
+              fontSize: "11px",
+              fontWeight: 600,
+              letterSpacing: "0.04em",
+              whiteSpace: "nowrap",
             }}
           >
-            {trade.symbol}
+            {actionWord} {amountDisplay} {trade.symbol}
           </span>
-          <span
-            className="text-[10px] font-mono"
-            style={{ color: "var(--fg-dim)" }}
-          >
-            {trade.chain}
-          </span>
+          {trade.isMev && (
+            <span
+              className="font-mono px-1.5 py-0.5 rounded"
+              style={{
+                background: "rgba(245,158,11,0.15)",
+                color: "var(--warning, #f59e0b)",
+                border: "1px solid rgba(245,158,11,0.35)",
+                fontSize: "9px",
+                fontWeight: 600,
+                letterSpacing: "0.06em",
+                whiteSpace: "nowrap",
+              }}
+              title="Identified as a known MEV bot or MEV router"
+            >
+              ⚡ MEV BOT
+            </span>
+          )}
         </div>
         <div className="text-right flex-shrink-0">
           <div
@@ -315,6 +342,9 @@ function TradeRow({
             {sign}
             {formatUsd(trade.amountUsd)}
           </div>
+          <div className="text-[10px]" style={{ color: "var(--fg-dim)" }}>
+            {trade.chain}
+          </div>
         </div>
       </div>
 
@@ -322,7 +352,7 @@ function TradeRow({
         {/* Whale wallet line — clickable */}
         <div className="flex items-center gap-2 text-[11px]">
           <span style={{ color: "var(--fg-dim)" }}>
-            {isBuy ? "Whale" : "Seller"}:
+            {trade.isMev ? "Bot" : isBuy ? "Whale" : "Seller"}:
           </span>
           <a
             href={trade.whaleExplorerUrl}
@@ -404,4 +434,23 @@ function shorten(addr: string): string {
   if (!addr) return "—";
   if (addr.length < 10) return addr;
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
+
+/**
+ * Format token amount with smart abbreviation:
+ *   1,234,567       → "1.2M"
+ *   12,500          → "12.5K"
+ *   12,500.5        → "12.5K"
+ *   234.5678        → "234.6"
+ *   0.0042          → "0.0042"
+ *   0.000123        → "0.0001"
+ */
+function formatTokenAmount(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}K`;
+  if (n >= 1) return n.toFixed(1);
+  /* Sub-1 amounts: show up to 4 significant decimals. */
+  return n.toFixed(4);
 }

@@ -8,7 +8,11 @@
    ───────────────────────────────────────────────────────────── */
 
 import { TtlCache } from "./cache";
-import { getWalletLabel, getWalletCategory } from "./walletLabels";
+import {
+  getWalletLabel,
+  getWalletCategory,
+  isMevWallet,
+} from "./walletLabels";
 
 const CACHE_TTL_MS = 90_000; // 90s — token transfer feeds change fast
 const ETHERSCAN_V2_API = "https://api.etherscan.io/v2/api";
@@ -24,6 +28,8 @@ export interface TokenTrade {
   /** Whale wallet (the non-CEX/non-DEX counterparty). */
   whaleAddress: string;
   whaleLabel?: string;
+  /** True if the whale is a known MEV bot or MEV router. */
+  isMev: boolean;
   /** Counterparty (CEX/DEX). */
   counterpartyAddress: string;
   counterpartyLabel: string;
@@ -372,12 +378,14 @@ function processTransfers(
 
     const cpLabel = getWalletLabel(chain.chainId, c.counterparty);
     const whaleLabel = getWalletLabel(chain.chainId, c.whale);
+    const whaleIsMev = isMevWallet(chain.chainId, c.whale);
 
     out.push({
       id: `${tx.hash}-${c.side}`,
       side: c.side,
       whaleAddress: c.whale,
       whaleLabel: whaleLabel?.label,
+      isMev: whaleIsMev,
       counterpartyAddress: c.counterparty,
       counterpartyLabel: cpLabel?.label ?? "Exchange",
       counterpartyType: c.cpType,
