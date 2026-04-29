@@ -1,20 +1,53 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import type { PredictionResponse } from "@/lib/alpha/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import type { PredictionResponse, AssetPrediction } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
 import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import PredictionCard from "./PredictionCard";
 import MarketTable from "./MarketTable";
 import AltSeasonGauge from "./AltSeasonGauge";
+import BtcDominanceCard from "./BtcDominanceCard";
 import type { CryptoRow, StockRow } from "@/lib/alpha/topMarketsClient";
 
 const REFRESH_MS = 90_000;
+
+/* Threshold (in confidence points) below which we consider a change in a
+   prediction "noise" and don't replace the displayed text. Anything above
+   this triggers a display update. Picked at 5 — matches our display
+   rounding granularity. */
+const CONFIDENCE_NOISE_THRESHOLD = 5;
 
 interface MarketsResp {
   crypto: CryptoRow[];
   stocks: StockRow[];
   generatedAt: number;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Stability helpers
+   ───────────────────────────────────────────────────────────── */
+
+/* Sort predictions by asset name so the card order never changes
+   between refreshes — only the values inside each card update. */
+function sortByAsset(arr: AssetPrediction[]): AssetPrediction[] {
+  return [...arr].sort((a, b) => a.asset.localeCompare(b.asset));
+}
+
+/* Build a "signature" of a prediction so we can tell when something
+   meaningful actually changed. We hash direction + rounded confidence
+   per asset. If the signature matches the previously-shown one, we
+   keep the old display to prevent jitter from minor confidence ticks
+   or AI rephrasing. */
+function predictionSignature(p: PredictionResponse): string {
+  const sig = (arr: AssetPrediction[]) =>
+    sortByAsset(arr)
+      .map(
+        (x) =>
+          `${x.asset}:${x.direction}:${Math.round(x.confidence / 5) * 5}`,
+      )
+      .join("|");
+  return `${sig(p.shortHorizon)}#${sig(p.btcMultiTimeframe)}`;
 }
 
 export default function PredictionsSection() {
@@ -25,6 +58,11 @@ export default function PredictionsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<"ai" | "crypto" | "stocks">("ai");
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+
+  /* Track the last accepted signature so we only re-render on real
+     changes. Stored in a ref so it doesn't trigger re-renders itself. */
+  const lastSigRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     /* Don't toggle the loading spinner on background re-fetches —
@@ -35,10 +73,42 @@ export default function PredictionsSection() {
       alphaGet<PredictionResponse>("/api/alpha/predict"),
       alphaGet<MarketsResp>("/api/alpha/markets"),
     ]);
+
     if (!pred) {
       if (data === null) setError("Couldn't reach the prediction engine.");
     } else {
-      setData(pred);
+      const newSig = predictionSignature(pred);
+      const sigChanged = newSig !== lastSigRef.current;
+      /* Stabilize: only swap displayed predictions when the signature
+         (direction + rounded confidence per asset) actually changed.
+         If it didn't change, keep showing the same text/cards — the
+         underlying signals haven't moved enough to justify a re-render
+         that the user might perceive as "jumping". */
+      if (sigChanged) {
+        /* Sort cards alphabetically so order is stable forever, and
+           replace data with new payload (sorted in-place). */
+        const stable: PredictionResponse = {
+          ...pred,
+          shortHorizon: sortByAsset(pred.shortHorizon),
+          btcMultiTimeframe: sortByAsset(pred.btcMultiTimeframe),
+        };
+        setData(stable);
+        lastSigRef.current = newSig;
+        setLastUpdated(Date.now());
+      } else if (data === null) {
+        /* First time we got data — accept it even if signature is the
+           same (compared against null). */
+        const stable: PredictionResponse = {
+          ...pred,
+          shortHorizon: sortByAsset(pred.shortHorizon),
+          btcMultiTimeframe: sortByAsset(pred.btcMultiTimeframe),
+        };
+        setData(stable);
+        lastSigRef.current = newSig;
+        setLastUpdated(Date.now());
+      }
+      /* Else: signature unchanged AND we already have data → do nothing.
+         The visible cards stay identical, no flicker. */
     }
 
     if (mkt) {
@@ -107,6 +177,9 @@ export default function PredictionsSection() {
       {/* AI Predictions tab */}
       {tab === "ai" && (
         <>
+          {/* BTC Dominance — top-of-tab macro context */}
+          <BtcDominanceCard />
+
           {/* Alt Season Index — always rendered. */}
           <AltSeasonGauge />
 
@@ -115,10 +188,24 @@ export default function PredictionsSection() {
             style={{ borderLeft: "3px solid var(--accent)" }}
           >
             <div
-              className="label-xs mb-3 flex items-center justify-between"
+              className="label-xs mb-3 flex items-center justify-between flex-wrap gap-2"
               style={{ color: "var(--accent-soft)" }}
             >
-              <span>AI market summary · 1–2H forecast</span>
+              <span className="flex items-center gap-3 flex-wrap">
+                <span>AI market summary · 1–2H forecast</span>
+                {lastUpdated && (
+                  <span
+                    className="text-[10px] font-mono"
+                    style={{
+                      color: "var(--fg-dim)",
+                      letterSpacing: "0.05em",
+                      textTransform: "none",
+                    }}
+                  >
+                    {formatLastUpdated(lastUpdated)}
+                  </span>
+                )}
+              </span>
               <button
                 type="button"
                 onClick={load}
@@ -292,4 +379,19 @@ function FallbackPanel({
       )}
     </div>
   );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Helpers
+   ───────────────────────────────────────────────────────────── */
+
+function formatLastUpdated(ts: number): string {
+  const ageSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (ageSec < 60) return "Updated just now";
+  if (ageSec < 3600) {
+    const mins = Math.floor(ageSec / 60);
+    return `Updated ${mins}m ago`;
+  }
+  const hours = Math.floor(ageSec / 3600);
+  return `Updated ${hours}h ago`;
 }

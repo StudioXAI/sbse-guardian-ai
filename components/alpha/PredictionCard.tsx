@@ -16,6 +16,11 @@ export default function PredictionCard({ prediction }: Props) {
       ? "var(--danger)"
       : "var(--accent)";
 
+  /* Round confidence to nearest 5 for stable display. Tiny ticks like
+     67→68→67 caused by minor signal jitter feel "jumping" to users.
+     Snapping to nearest 5 means the value only changes when the
+     underlying signals shifted by something meaningful. */
+  const stableConfidence = Math.round(prediction.confidence / 5) * 5;
   const directionLabel = prediction.direction.toUpperCase();
 
   return (
@@ -69,7 +74,7 @@ export default function PredictionCard({ prediction }: Props) {
           <div
             className="h-full rounded-full"
             style={{
-              width: `${prediction.confidence}%`,
+              width: `${stableConfidence}%`,
               background: fill,
             }}
           />
@@ -78,7 +83,7 @@ export default function PredictionCard({ prediction }: Props) {
           className="font-mono text-[10px]"
           style={{ color: "var(--fg-dim)" }}
         >
-          {prediction.confidence}%
+          {stableConfidence}%
         </span>
       </div>
 
