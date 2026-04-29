@@ -2,15 +2,22 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { WhaleMove } from "@/lib/alpha/types";
+import type { TokenWhalesPayload } from "@/lib/alpha/tokenWhaleTracker";
 import { alphaGet } from "@/lib/alpha/client";
 import { directionFillVar } from "./DirectionBadge";
 import { timeAgo, formatUsd } from "@/lib/alpha/format";
+import TokenWhalesPanel from "./TokenWhalesPanel";
 
 const HOUR_MS = 60 * 60 * 1000;
 
-export default function WhalesSection() {
-  const [whales, setWhales] = useState<WhaleMove[] | null>(null);
+type WhaleTab = "native" | "tokens";
 
+export default function WhalesSection() {
+  const [tab, setTab] = useState<WhaleTab>("native");
+  const [whales, setWhales] = useState<WhaleMove[] | null>(null);
+  const [tokenWhales, setTokenWhales] = useState<TokenWhalesPayload | null>(null);
+
+  /* Native whales (existing) — load once on mount */
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -22,7 +29,100 @@ export default function WhalesSection() {
     };
   }, []);
 
-  /* Split into recent (last 6h) and older (6-24h) for the past-results view. */
+  /* Token whales — load when tab is selected (lazy) */
+  useEffect(() => {
+    if (tab !== "tokens" || tokenWhales !== null) return;
+    let cancelled = false;
+    void (async () => {
+      const data = await alphaGet<TokenWhalesPayload>("/api/alpha/token-whales");
+      if (!cancelled) {
+        setTokenWhales(
+          data ?? {
+            buys: [],
+            sells: [],
+            generatedAt: Date.now(),
+            tokensScanned: 0,
+          },
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, tokenWhales]);
+
+  return (
+    <div className="space-y-5">
+      {/* Sub-tabs */}
+      <div className="flex flex-wrap gap-2">
+        {(
+          [
+            {
+              id: "native" as const,
+              label: "Native asset whales",
+              sub: "$100K+ · ETH, BNB, MATIC, ARB, OP",
+            },
+            {
+              id: "tokens" as const,
+              label: "Token buys / sells",
+              sub: "$50K+ · Top tokens · DEX + CEX classified",
+            },
+          ]
+        ).map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className="px-3 py-2 rounded-md text-left transition-colors"
+            style={{
+              background: t.id === tab ? "var(--accent-dim)" : "var(--bg-subtle)",
+              border:
+                t.id === tab
+                  ? "1px solid var(--border-accent)"
+                  : "1px solid var(--border)",
+              color: t.id === tab ? "var(--accent-soft)" : "var(--fg-muted)",
+              cursor: "pointer",
+            }}
+          >
+            <div
+              className="font-mono"
+              style={{ fontSize: "11px", letterSpacing: "0.06em" }}
+            >
+              {t.label}
+            </div>
+            <div className="text-[10px] mt-0.5" style={{ color: "var(--fg-dim)" }}>
+              {t.sub}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {tab === "native" && <NativeWhalesView whales={whales} />}
+      {tab === "tokens" && <TokenWhalesPanel data={tokenWhales} />}
+
+      {/* Disclaimer */}
+      <div
+        className="card p-3"
+        style={{
+          background: "var(--bg-subtle)",
+          borderColor: "var(--border)",
+        }}
+      >
+        <p className="text-[11px]" style={{ color: "var(--fg-dim)" }}>
+          Information aggregated from public on-chain data. Not financial
+          advice. SbSe Guardian Alpha is a non-custodial intelligence layer —
+          no execution, no custody, no KYC.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Native whales view (the existing $100K+ feed)
+   ───────────────────────────────────────────────────────────── */
+
+function NativeWhalesView({ whales }: { whales: WhaleMove[] | null }) {
   const split = useMemo(() => {
     if (!whales) return { recent: [] as WhaleMove[], older: [] as WhaleMove[] };
     const now = Date.now();
@@ -35,7 +135,6 @@ export default function WhalesSection() {
     return { recent, older };
   }, [whales]);
 
-  /* Aggregate stats across the visible feed. */
   const stats = useMemo(() => {
     if (!whales || whales.length === 0) {
       return { totalUsd: 0, bullish: 0, bearish: 0, neutral: 0, biggest: 0 };
@@ -57,7 +156,6 @@ export default function WhalesSection() {
 
   return (
     <div className="space-y-5">
-      {/* Header / aggregate stats */}
       <div
         className="card p-4 flex items-center justify-between flex-wrap gap-3"
         style={{ borderLeft: "3px solid var(--accent)" }}
@@ -85,7 +183,6 @@ export default function WhalesSection() {
         </span>
       </div>
 
-      {/* Stats strip */}
       {whales && whales.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Total flow" value={formatUsd(stats.totalUsd)} />
@@ -103,7 +200,6 @@ export default function WhalesSection() {
         </div>
       )}
 
-      {/* Recent activity (last 6h) */}
       <div className="card p-5">
         <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
           <div className="label-sm" style={{ color: "var(--fg-muted)" }}>
@@ -133,7 +229,6 @@ export default function WhalesSection() {
         )}
       </div>
 
-      {/* Past results (6-24h) */}
       {whales && split.older.length > 0 && (
         <div className="card p-5">
           <div className="label-sm mb-4" style={{ color: "var(--fg-muted)" }}>
@@ -146,21 +241,6 @@ export default function WhalesSection() {
           </div>
         </div>
       )}
-
-      {/* Decentralization disclaimer */}
-      <div
-        className="card p-3"
-        style={{
-          background: "var(--bg-subtle)",
-          borderColor: "var(--border)",
-        }}
-      >
-        <p className="text-[11px]" style={{ color: "var(--fg-dim)" }}>
-          Information aggregated from public on-chain data. Not financial
-          advice. SbSe Guardian Alpha is a non-custodial intelligence layer —
-          no execution, no custody, no KYC.
-        </p>
-      </div>
     </div>
   );
 }
