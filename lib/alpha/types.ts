@@ -72,6 +72,18 @@ export interface PolymarketBet {
   link?: string;
   /** Whether the market has settled. */
   isClosed?: boolean;
+  /** ISO end / close date for the market. */
+  endDate?: string;
+  /** Last 24-hour volume, USD. */
+  volume24hUsd?: number;
+  /** Comment count from gamma (closest analog to engagement count). */
+  commentCount?: number;
+  /** Approximate dollars on YES side: volume × yesPct/100. */
+  yesPoolUsd?: number;
+  /** Approximate dollars on NO side: volume × (100-yesPct)/100. */
+  noPoolUsd?: number;
+  /** Liquidity in USD (depth of orderbook around mid). */
+  liquidityUsd?: number;
 }
 
 export interface SocialPost {

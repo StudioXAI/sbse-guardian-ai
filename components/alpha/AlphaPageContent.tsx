@@ -15,6 +15,10 @@ import InfiSection from "@/components/alpha/InfiSection";
 import SocialSection from "@/components/alpha/SocialSection";
 import AccessBanner, { type AccessStatus } from "@/components/alpha/AccessBanner";
 import AssistantWidget from "@/components/alpha/AssistantWidget";
+import {
+  RefreshProvider,
+  useRefreshContext,
+} from "@/lib/alpha/refreshContext";
 
 interface AccessApiResponse {
   success: boolean;
@@ -22,9 +26,18 @@ interface AccessApiResponse {
 }
 
 export default function AlphaPageContent() {
+  return (
+    <RefreshProvider>
+      <AlphaPageInner />
+    </RefreshProvider>
+  );
+}
+
+function AlphaPageInner() {
   const [section, setSection] = useState<AlphaSection>("overview");
   const [status, setStatus] = useState<AccessStatus | null>(null);
   const { address, isConnected } = useAppKitAccount();
+  const { lastRefreshedAt } = useRefreshContext();
 
   const refreshStatus = useCallback(async () => {
     if (!address || !isConnected) {
@@ -59,7 +72,11 @@ export default function AlphaPageContent() {
         <AlphaHero />
 
         <div className="mb-5">
-          <AccessBanner status={status} />
+          <AccessBanner
+            status={status}
+            lastRefreshedAt={lastRefreshedAt}
+            refreshIntervalMs={90_000}
+          />
         </div>
 
         <div className="mb-6">

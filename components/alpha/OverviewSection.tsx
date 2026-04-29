@@ -1,15 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import type {
   OverviewStats,
   Signal,
   PredictionResponse,
 } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import SignalRow from "./SignalRow";
 import PredictionCard from "./PredictionCard";
 import type { AlphaSection } from "./AlphaSubNav";
+
+const REFRESH_MS = 90_000;
+
+interface OverviewBundle {
+  stats: OverviewStats | null;
+  topSignals: Signal[];
+  prediction: PredictionResponse | null;
+}
 
 interface Props {
   onNavigate: (section: AlphaSection) => void;
@@ -39,28 +49,34 @@ const STAT_DEFS: Array<{
 ];
 
 export default function OverviewSection({ onNavigate }: Props) {
-  const [stats, setStats] = useState<OverviewStats | null>(null);
-  const [topSignals, setTopSignals] = useState<Signal[] | null>(null);
-  const [prediction, setPrediction] = useState<PredictionResponse | null>(null);
+  const { reportRefresh } = useRefreshContext();
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const [overview, signals, predict] = await Promise.all([
-        alphaGet<OverviewStats>("/api/alpha/overview"),
-        alphaGet<Signal[]>("/api/alpha/signals?filter=market"),
-        alphaGet<PredictionResponse>("/api/alpha/predict"),
-      ]);
-      if (cancelled) return;
-      if (overview) setStats(overview);
-      if (signals) setTopSignals(signals.slice(0, 5));
-      if (predict) setPrediction(predict);
-    }
-    void load();
-    return () => {
-      cancelled = true;
+  const loader = useCallback(async (): Promise<OverviewBundle | null> => {
+    const [overview, signals, predict] = await Promise.all([
+      alphaGet<OverviewStats>("/api/alpha/overview"),
+      alphaGet<Signal[]>("/api/alpha/signals?filter=market"),
+      alphaGet<PredictionResponse>("/api/alpha/predict"),
+    ]);
+    if (!overview && !signals && !predict) return null;
+    return {
+      stats: overview ?? null,
+      topSignals: signals ? signals.slice(0, 5) : [],
+      prediction: predict ?? null,
     };
   }, []);
+
+  const { data, lastRefreshedAt } = useAutoRefresh<OverviewBundle>(
+    loader,
+    REFRESH_MS,
+  );
+
+  useEffect(() => {
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
+
+  const stats = data?.stats ?? null;
+  const topSignals = data?.topSignals ?? null;
+  const prediction = data?.prediction ?? null;
 
   return (
     <div className="space-y-6">

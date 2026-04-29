@@ -1,30 +1,42 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import type { Signal } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import SignalRow from "./SignalRow";
 
+const REFRESH_MS = 90_000;
+
+interface SignalFeeds {
+  market: Signal[];
+  infi: Signal[];
+}
+
 export default function SignalsSection() {
-  const [market, setMarket] = useState<Signal[] | null>(null);
-  const [infi, setInfi] = useState<Signal[] | null>(null);
+  const { reportRefresh } = useRefreshContext();
+
+  const loader = useCallback(async (): Promise<SignalFeeds | null> => {
+    const [m, i] = await Promise.all([
+      alphaGet<Signal[]>("/api/alpha/signals?filter=market"),
+      alphaGet<Signal[]>("/api/alpha/signals?filter=infi"),
+    ]);
+    if (m === null && i === null) return null;
+    return { market: m ?? [], infi: i ?? [] };
+  }, []);
+
+  const { data, lastRefreshedAt } = useAutoRefresh<SignalFeeds>(
+    loader,
+    REFRESH_MS,
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      const [m, i] = await Promise.all([
-        alphaGet<Signal[]>("/api/alpha/signals?filter=market"),
-        alphaGet<Signal[]>("/api/alpha/signals?filter=infi"),
-      ]);
-      if (cancelled) return;
-      setMarket(m ?? []);
-      setInfi(i ?? []);
-    }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
+
+  const market = data?.market ?? null;
+  const infi = data?.infi ?? null;
 
   return (
     <div className="space-y-4">

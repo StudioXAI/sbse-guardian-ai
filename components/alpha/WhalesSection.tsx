@@ -1,55 +1,47 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { WhaleMove } from "@/lib/alpha/types";
 import type { TokenWhalesPayload } from "@/lib/alpha/tokenWhaleTracker";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import { directionFillVar } from "./DirectionBadge";
 import { timeAgo, formatUsd } from "@/lib/alpha/format";
 import TokenWhalesPanel from "./TokenWhalesPanel";
 
 const HOUR_MS = 60 * 60 * 1000;
+const REFRESH_MS = 90_000;
 
 type WhaleTab = "native" | "tokens";
 
 export default function WhalesSection() {
   const [tab, setTab] = useState<WhaleTab>("native");
-  const [whales, setWhales] = useState<WhaleMove[] | null>(null);
-  const [tokenWhales, setTokenWhales] = useState<TokenWhalesPayload | null>(null);
+  const { reportRefresh } = useRefreshContext();
 
-  /* Native whales (existing) — load once on mount */
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await alphaGet<WhaleMove[]>("/api/alpha/whales");
-      if (!cancelled) setWhales(data ?? []);
-    })();
-    return () => {
-      cancelled = true;
-    };
+  /* Native whales — auto-refresh every 90s */
+  const nativeLoader = useCallback(async () => {
+    return alphaGet<WhaleMove[]>("/api/alpha/whales");
   }, []);
+  const { data: whales, lastRefreshedAt: nativeRefreshedAt } = useAutoRefresh<
+    WhaleMove[]
+  >(nativeLoader, REFRESH_MS);
 
-  /* Token whales — load when tab is selected (lazy) */
+  /* Token whales — auto-refresh every 90s when tab is active */
+  const tokenLoader = useCallback(async () => {
+    return alphaGet<TokenWhalesPayload>("/api/alpha/token-whales");
+  }, []);
+  const { data: tokenWhales, lastRefreshedAt: tokenRefreshedAt } = useAutoRefresh<
+    TokenWhalesPayload
+  >(tokenLoader, REFRESH_MS);
+
+  /* Broadcast refresh state to global banner. */
   useEffect(() => {
-    if (tab !== "tokens" || tokenWhales !== null) return;
-    let cancelled = false;
-    void (async () => {
-      const data = await alphaGet<TokenWhalesPayload>("/api/alpha/token-whales");
-      if (!cancelled) {
-        setTokenWhales(
-          data ?? {
-            buys: [],
-            sells: [],
-            generatedAt: Date.now(),
-            tokensScanned: 0,
-          },
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [tab, tokenWhales]);
+    if (nativeRefreshedAt !== null) reportRefresh();
+  }, [nativeRefreshedAt, reportRefresh]);
+  useEffect(() => {
+    if (tokenRefreshedAt !== null) reportRefresh();
+  }, [tokenRefreshedAt, reportRefresh]);
 
   return (
     <div className="space-y-5">

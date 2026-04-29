@@ -1,30 +1,51 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { PolymarketBet } from "@/lib/alpha/types";
 import type { PolymarketSplit } from "@/lib/alpha/polymarketClient";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import { directionFillVar } from "./DirectionBadge";
 import { formatUsd } from "@/lib/alpha/format";
 import { computeMarketImpact } from "@/lib/alpha/marketImpactEngine";
 
-export default function PolymarketSection() {
-  const [data, setData] = useState<PolymarketSplit | null>(null);
-  const [tab, setTab] = useState<"ongoing" | "closed">("ongoing");
-  const [filter, setFilter] = useState<"all" | "yes" | "no">("all");
+type PolyTab = "ongoing" | "trending" | "closed";
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const d = await alphaGet<PolymarketSplit>("/api/alpha/polymarket");
-      if (!cancelled) setData(d ?? { ongoing: [], closed: [] });
-    })();
-    return () => {
-      cancelled = true;
-    };
+const REFRESH_MS = 90_000;
+
+export default function PolymarketSection() {
+  const [tab, setTab] = useState<PolyTab>("ongoing");
+  const [filter, setFilter] = useState<"all" | "yes" | "no">("all");
+  const { reportRefresh } = useRefreshContext();
+
+  /* Single fetch returns all three feeds in one call. */
+  const loader = useCallback(async () => {
+    const d = await alphaGet<PolymarketSplit>("/api/alpha/polymarket");
+    return d ?? null;
   }, []);
 
-  const activeBets = tab === "ongoing" ? data?.ongoing ?? [] : data?.closed ?? [];
+  const { data, lastRefreshedAt } = useAutoRefresh<PolymarketSplit>(
+    loader,
+    REFRESH_MS,
+  );
+
+  /* Broadcast our refresh to the global banner. */
+  useEffect(() => {
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
+
+  /* Reset filter when switching to closed (filters change meaning). */
+  useEffect(() => {
+    setFilter("all");
+  }, [tab]);
+
+  const activeBets =
+    tab === "ongoing"
+      ? data?.ongoing ?? []
+      : tab === "trending"
+      ? data?.trending ?? []
+      : data?.closed ?? [];
 
   const impact = useMemo(
     () => (data ? computeMarketImpact(data.ongoing) : null),
@@ -56,6 +77,13 @@ export default function PolymarketSection() {
     return { yesWins, noWins, toss };
   }, [activeBets]);
 
+  /* Tab counts for the sub-nav labels. */
+  const counts = {
+    ongoing: data?.ongoing.length ?? 0,
+    trending: data?.trending.length ?? 0,
+    closed: data?.closed.length ?? 0,
+  };
+
   return (
     <div className="space-y-5">
       {/* Header */}
@@ -70,7 +98,7 @@ export default function PolymarketSection() {
           <div className="text-[12px] mt-1" style={{ color: "var(--fg-muted)" }}>
             {data === null
               ? "Loading…"
-              : `${data.ongoing.length} ongoing · ${data.closed.length} closed`}
+              : `${counts.ongoing} ongoing · ${counts.trending} trending · ${counts.closed} closed`}
           </div>
         </div>
       </div>
@@ -97,18 +125,24 @@ export default function PolymarketSection() {
         </div>
       )}
 
-      {/* Ongoing / Closed tabs */}
+      {/* Three-tab nav */}
       <div className="flex flex-wrap gap-2">
         <SubTab
           active={tab === "ongoing"}
           label="Ongoing markets"
-          sub={`Top ${data?.ongoing.length ?? 0} live`}
+          sub={`Top ${counts.ongoing} live`}
           onClick={() => setTab("ongoing")}
+        />
+        <SubTab
+          active={tab === "trending"}
+          label="Trending markets"
+          sub={`${counts.trending} hot · 24h volume`}
+          onClick={() => setTab("trending")}
         />
         <SubTab
           active={tab === "closed"}
           label="Closed markets"
-          sub={`Top ${data?.closed.length ?? 0} settled`}
+          sub={`${counts.closed} newest closed`}
           onClick={() => setTab("closed")}
         />
       </div>
@@ -118,7 +152,7 @@ export default function PolymarketSection() {
         <div className="grid gap-3 md:grid-cols-2">
           <div className="card p-4">
             <div className="label-xs mb-3" style={{ color: "var(--fg-muted)" }}>
-              {tab === "ongoing" ? "YES vs NO leaning" : "YES vs NO outcomes"}
+              {tab === "closed" ? "YES vs NO outcomes" : "YES vs NO leaning"}
             </div>
             <DominanceBar
               yesWins={dominance.yesWins}
@@ -168,8 +202,12 @@ export default function PolymarketSection() {
       <div className="card p-5">
         <div className="flex items-center justify-between flex-wrap gap-3 mb-4">
           <div className="label-sm" style={{ color: "var(--fg-muted)" }}>
-            {tab === "ongoing" ? "Top 50 ongoing" : "Top 50 closed"} ·{" "}
-            {filteredBets.length} shown
+            {tab === "ongoing"
+              ? "Top 50 ongoing"
+              : tab === "trending"
+              ? "Top 50 trending"
+              : "Top 50 newest closed"}{" "}
+            · {filteredBets.length} shown
           </div>
           <div
             className="inline-flex p-0.5 rounded-md"
@@ -181,8 +219,8 @@ export default function PolymarketSection() {
             {(
               [
                 ["all", "All"],
-                ["yes", tab === "ongoing" ? "YES leaning" : "YES won"],
-                ["no", tab === "ongoing" ? "NO leaning" : "NO won"],
+                ["yes", tab === "closed" ? "YES won" : "YES leaning"],
+                ["no", tab === "closed" ? "NO won" : "NO leaning"],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -223,12 +261,14 @@ export default function PolymarketSection() {
             >
               {tab === "ongoing"
                 ? "NO ONGOING MARKETS RIGHT NOW"
-                : "NO CLOSED MARKETS IN RECENT WINDOW"}
+                : tab === "trending"
+                ? "NO TRENDING MARKETS RIGHT NOW"
+                : "NO RECENT CLOSURES"}
             </div>
             <p className="text-[13px]" style={{ color: "var(--fg-muted)" }}>
-              {tab === "ongoing"
-                ? "Live markets are temporarily unreachable. The feed refreshes every 5 minutes."
-                : "No recently-settled markets to display. Switch to Ongoing for live consensus."}
+              {tab === "closed"
+                ? "No recently-settled markets to display. Switch to Ongoing or Trending for live consensus."
+                : "Live markets are temporarily unreachable. The feed refreshes every 90 seconds."}
             </p>
           </div>
         )}
@@ -245,7 +285,7 @@ export default function PolymarketSection() {
             style={{ maxHeight: "640px" }}
           >
             {filteredBets.map((b) => (
-              <BetRow key={b.id} bet={b} />
+              <BetRow key={b.id} bet={b} showRichMeta={tab === "trending"} />
             ))}
           </div>
         )}
@@ -265,6 +305,10 @@ export default function PolymarketSection() {
     </div>
   );
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Sub-components
+   ───────────────────────────────────────────────────────────── */
 
 function SubTab({
   active,
@@ -291,7 +335,10 @@ function SubTab({
         cursor: "pointer",
       }}
     >
-      <div className="font-mono" style={{ fontSize: "11px", letterSpacing: "0.06em" }}>
+      <div
+        className="font-mono"
+        style={{ fontSize: "11px", letterSpacing: "0.06em" }}
+      >
         {label}
       </div>
       <div className="text-[10px] mt-0.5" style={{ color: "var(--fg-dim)" }}>
@@ -313,20 +360,15 @@ function DominanceBar({
   isClosed: boolean;
 }) {
   const total = yesWins + noWins + toss;
-  if (total === 0)
-    return (
-      <p className="text-[12px]" style={{ color: "var(--fg-dim)" }}>
-        No markets to analyze.
-      </p>
-    );
+  if (total === 0) return null;
   const yesPct = (yesWins / total) * 100;
   const noPct = (noWins / total) * 100;
   const tossPct = (toss / total) * 100;
 
   return (
-    <div>
+    <div className="space-y-2">
       <div
-        className="flex h-[10px] rounded-full overflow-hidden mb-3"
+        className="h-2 rounded-full overflow-hidden flex"
         style={{ background: "var(--bg-subtle)" }}
       >
         {yesPct > 0 && (
@@ -420,62 +462,55 @@ function ImpactCard({
         <div className="label-xs" style={{ color: "var(--fg-muted)" }}>
           {label}
         </div>
-        <span
-          className="text-[10px] px-2 py-0.5 rounded-full font-mono"
-          style={{
-            background:
-              direction === "bullish"
-                ? "var(--success-dim)"
-                : direction === "bearish"
-                ? "var(--danger-dim)"
-                : "var(--accent-dim)",
-            color: fill,
-            letterSpacing: "0.05em",
-          }}
-        >
-          {dirLabel}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className="text-[9px] px-1.5 py-0.5 rounded font-mono"
+            style={{
+              background:
+                direction === "bullish"
+                  ? "rgba(16,185,129,0.15)"
+                  : direction === "bearish"
+                  ? "rgba(239,68,68,0.15)"
+                  : "var(--accent-dim)",
+              color: fill,
+              letterSpacing: "0.05em",
+            }}
+          >
+            {dirLabel}
+          </span>
+          <span
+            className="font-mono"
+            style={{ color: fill, fontSize: "20px" }}
+          >
+            {score.toFixed(0)}
+          </span>
+        </div>
       </div>
-      <div className="flex items-baseline gap-2 mb-2">
-        <span
-          className="font-mono font-medium"
-          style={{ fontSize: "26px", color: fill, letterSpacing: "-0.02em" }}
-        >
-          {score >= 0 ? "+" : ""}
-          {score}
-        </span>
-        <span className="text-[11px]" style={{ color: "var(--fg-dim)" }}>
-          impact score
-        </span>
-      </div>
-      <div
-        className="relative h-[3px] rounded-full mb-3"
-        style={{ background: "var(--border)" }}
+      <p
+        className="text-[12px] leading-relaxed mb-2"
+        style={{ color: "var(--fg-muted)" }}
       >
-        <div
-          className="absolute top-0 h-full"
-          style={{ background: "var(--fg-dim)", left: "50%", width: "1px" }}
-        />
-        <div
-          className="absolute top-0 h-full rounded-full"
-          style={{
-            background: fill,
-            left: score >= 0 ? "50%" : `${50 + score / 2}%`,
-            width: `${Math.abs(score) / 2}%`,
-          }}
-        />
-      </div>
-      <p className="text-[12px] leading-relaxed mb-2" style={{ color: "var(--fg)" }}>
         {narrative}
       </p>
       <div className="text-[10px]" style={{ color: "var(--fg-dim)" }}>
-        {count} relevant {count === 1 ? "market" : "markets"} · {formatUsd(volumeUsd)} total volume
+        {count} relevant {count === 1 ? "market" : "markets"} ·{" "}
+        {formatUsd(volumeUsd)} total volume
       </div>
     </div>
   );
 }
 
-function BetRow({ bet }: { bet: PolymarketBet }) {
+/* ─────────────────────────────────────────────────────────────
+   Bet row — supports a "rich meta" mode for the Trending tab
+   ───────────────────────────────────────────────────────────── */
+
+function BetRow({
+  bet,
+  showRichMeta = false,
+}: {
+  bet: PolymarketBet;
+  showRichMeta?: boolean;
+}) {
   const fill = directionFillVar(bet.signalDirection);
   const borderColor =
     bet.signalDirection === "bullish"
@@ -541,7 +576,10 @@ function BetRow({ bet }: { bet: PolymarketBet }) {
             {pillLabel}
           </span>
           <div className="text-right">
-            <div className="font-mono font-medium" style={{ fontSize: "14px", color: fill }}>
+            <div
+              className="font-mono font-medium"
+              style={{ fontSize: "14px", color: fill }}
+            >
               {bet.yesPct}%
             </div>
             <div className="text-[9px]" style={{ color: "var(--fg-dim)" }}>
@@ -561,11 +599,105 @@ function BetRow({ bet }: { bet: PolymarketBet }) {
         />
       </div>
 
+      {/* Rich metadata for trending tab — biggest YES/NO pools, end date,
+          comments, liquidity. Hidden by default to keep ongoing/closed
+          rows compact. */}
+      {showRichMeta && (
+        <div
+          className="grid gap-1.5 mb-2 p-2 rounded"
+          style={{ background: "var(--bg-subtle)" }}
+        >
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <div
+                className="text-[9px] font-mono"
+                style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
+              >
+                BIGGEST YES POOL
+              </div>
+              <div
+                className="font-mono"
+                style={{ color: "var(--success)", fontSize: "13px" }}
+              >
+                ~{formatUsd(bet.yesPoolUsd ?? 0)}
+              </div>
+            </div>
+            <div>
+              <div
+                className="text-[9px] font-mono"
+                style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
+              >
+                BIGGEST NO POOL
+              </div>
+              <div
+                className="font-mono"
+                style={{ color: "var(--danger)", fontSize: "13px" }}
+              >
+                ~{formatUsd(bet.noPoolUsd ?? 0)}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center justify-between flex-wrap gap-2 text-[10px]">
+            <span style={{ color: "var(--fg-dim)" }}>
+              {bet.endDate ? (
+                <>
+                  Closes:{" "}
+                  <span
+                    className="font-mono"
+                    style={{ color: "var(--fg-muted)" }}
+                  >
+                    {formatEndDate(bet.endDate)}
+                  </span>
+                </>
+              ) : (
+                "No close date"
+              )}
+            </span>
+            <span style={{ color: "var(--fg-dim)" }}>
+              {bet.commentCount && bet.commentCount > 0 ? (
+                <>
+                  💬{" "}
+                  <span className="font-mono">
+                    {bet.commentCount.toLocaleString()}
+                  </span>{" "}
+                  comments
+                </>
+              ) : null}
+            </span>
+            {bet.liquidityUsd ? (
+              <span style={{ color: "var(--fg-dim)" }}>
+                Liquidity:{" "}
+                <span
+                  className="font-mono"
+                  style={{ color: "var(--fg-muted)" }}
+                >
+                  {formatUsd(bet.liquidityUsd)}
+                </span>
+              </span>
+            ) : null}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between flex-wrap gap-2">
         <span className="text-[11px]" style={{ color: "var(--fg-muted)" }}>
           {bet.signalNote}
         </span>
         <div className="flex items-center gap-2 flex-shrink-0">
+          {!showRichMeta && bet.endDate && (
+            <span
+              className="text-[10px]"
+              style={{ color: "var(--fg-dim)" }}
+            >
+              {bet.isClosed ? "Closed" : "Closes"}{" "}
+              <span
+                className="font-mono"
+                style={{ color: "var(--fg-muted)" }}
+              >
+                {formatEndDate(bet.endDate)}
+              </span>
+            </span>
+          )}
           <span
             className="font-mono text-[10px]"
             style={{ color: "var(--fg-dim)" }}
@@ -594,4 +726,21 @@ function BetRow({ bet }: { bet: PolymarketBet }) {
       </div>
     </div>
   );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Helpers
+   ───────────────────────────────────────────────────────────── */
+
+function formatEndDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  /* Show as "Mar 14" if this year, otherwise "Mar 14 '24". */
+  const now = new Date();
+  const sameYear = d.getFullYear() === now.getFullYear();
+  const monthDay = d.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+  return sameYear ? monthDay : `${monthDay} '${String(d.getFullYear()).slice(-2)}`;
 }

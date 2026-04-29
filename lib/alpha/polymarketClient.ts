@@ -1,32 +1,47 @@
 /* ─────────────────────────────────────────────────────────────
    Polymarket Live Data — gamma-api edition
-   - gamma-api.polymarket.com supports server-side filters for
-     active/closed/archived which is more reliable than the
-     clob.polymarket.com/markets endpoint
-   - Two separate fetches: ongoing (top 50 trending by 24h volume)
-     and closed (top 50 settled by total volume)
-   - Public/no-auth, 5-minute cache
+
+   Three feeds, each cached for 90 seconds to match the global
+   auto-refresh cadence:
+
+   - ongoing  : top 50 active markets, sorted by 24h volume
+   - closed   : top 50 most-recently-closed markets (sorted by
+                closedTime descending, newest closures first)
+   - trending : top 50 by 24h volume — markets with the most
+                recent activity, regardless of total volume
+
+   Server-side filters guarantee no cross-leakage between active
+   and closed lists. Public/no-auth.
    ───────────────────────────────────────────────────────────── */
 
 import { TtlCache } from "./cache";
 import type { PolymarketBet, Direction } from "./types";
 
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 90_000; // 90s — matches global auto-refresh
 const REQUEST_TIMEOUT_MS = 12_000;
 
-/* Fetch wider than 50 so we can sort client-side and trim to top 50.
-   Gamma's max limit is 500, but 200 is plenty and faster. */
-const ONGOING_URL =
-  "https://gamma-api.polymarket.com/markets" +
-  "?active=true&closed=false&archived=false&limit=200";
+const GAMMA_BASE = "https://gamma-api.polymarket.com/markets";
 
-const CLOSED_URL =
-  "https://gamma-api.polymarket.com/markets" +
-  "?closed=true&archived=false&limit=200";
+/* Server-side ordering keeps the wire payload small and ensures
+   we get the right markets in the first place rather than fetching
+   200 and re-sorting client-side. */
+const ONGOING_URL =
+  `${GAMMA_BASE}?active=true&closed=false&archived=false` +
+  `&order=volume24hr&ascending=false&limit=200`;
+
+const CLOSED_NEWEST_URL =
+  `${GAMMA_BASE}?closed=true&archived=false` +
+  `&order=closedTime&ascending=false&limit=100`;
+
+const TRENDING_URL =
+  `${GAMMA_BASE}?active=true&closed=false&archived=false` +
+  `&order=volume24hr&ascending=false&limit=100`;
 
 export interface PolymarketSplit {
   ongoing: PolymarketBet[];
   closed: PolymarketBet[];
+  trending: PolymarketBet[];
+  generatedAt: number;
 }
 
 const cache = new TtlCache<PolymarketSplit>(CACHE_TTL_MS);
@@ -43,10 +58,16 @@ interface GammaMarket {
   volume?: string | number;
   volume24hr?: string | number;
   volumeNum?: number;
+  liquidity?: string | number;
+  liquidityNum?: number;
   closed?: boolean;
   archived?: boolean;
   active?: boolean;
   endDate?: string;
+  closedTime?: string;
+  commentCount?: number;
+  /** Some payloads include this nested. */
+  events?: Array<{ commentCount?: number }>;
 }
 
 function num(v: string | number | undefined): number {
@@ -117,8 +138,27 @@ function gammaToBet(
   }
 
   const yesPct = Math.max(0, Math.min(100, Math.round(yesPriceRaw * 100)));
-  const volumeUsd =
-    num(m.volume24hr) || num(m.volume) || num(m.volumeNum);
+  const totalVolume = num(m.volume) || num(m.volumeNum);
+  const vol24h = num(m.volume24hr);
+  /* Pick the most informative volume number for the row. For closed
+     markets total > 24h. For active markets either works but 24h is
+     more "live". */
+  const volumeUsd = isClosed ? totalVolume || vol24h : vol24h || totalVolume;
+
+  /* Approximate YES/NO pool sizes from total volume × probability split.
+     This isn't the EXACT bet size on each side (which would require
+     per-market position queries), but it's the closest fair approximation
+     and useful for "biggest bets on YES/NO" framing. */
+  const liquidityUsd = num(m.liquidity) || num(m.liquidityNum);
+  const refForPools = totalVolume || vol24h;
+  const yesPoolUsd = refForPools > 0 ? Math.round((refForPools * yesPct) / 100) : 0;
+  const noPoolUsd = refForPools > 0 ? Math.round((refForPools * (100 - yesPct)) / 100) : 0;
+
+  /* Comment count — try direct field first, then nested events array. */
+  let commentCount = m.commentCount ?? 0;
+  if (!commentCount && Array.isArray(m.events) && m.events.length > 0) {
+    commentCount = m.events[0]?.commentCount ?? 0;
+  }
 
   return {
     id: m.id ?? m.conditionId ?? `gamma-${idx}`,
@@ -129,6 +169,12 @@ function gammaToBet(
     signalNote: statusNote(yesPct, isClosed),
     link: buildLink(m),
     isClosed,
+    endDate: isClosed ? m.closedTime ?? m.endDate : m.endDate,
+    volume24hUsd: vol24h,
+    commentCount,
+    yesPoolUsd,
+    noPoolUsd,
+    liquidityUsd: liquidityUsd > 0 ? liquidityUsd : undefined,
   };
 }
 
@@ -154,30 +200,47 @@ export async function fetchPolymarketSplit(): Promise<PolymarketSplit> {
   const cached = cache.get("split");
   if (cached) return cached;
 
-  /* Fetch both feeds in parallel — server-side filter guarantees
-     no closed markets leak into the ongoing list and vice versa. */
-  const [ongoingRaw, closedRaw] = await Promise.all([
+  /* Fetch all three feeds in parallel. Server-side ordering means
+     each feed already comes pre-sorted; we just convert and trim. */
+  const [ongoingRaw, closedRaw, trendingRaw] = await Promise.all([
     fetchGamma(ONGOING_URL),
-    fetchGamma(CLOSED_URL),
+    fetchGamma(CLOSED_NEWEST_URL),
+    fetchGamma(TRENDING_URL),
   ]);
 
-  /* Convert and sort by 24h volume (ongoing) / total volume (closed)
-     client-side so we get truly trending markets at the top. */
   const ongoing: PolymarketBet[] = ongoingRaw
     .map((m, i) => gammaToBet(m, i, false))
     .filter((b): b is PolymarketBet => b !== null && b.volumeUsd > 0)
-    .sort((a, b) => b.volumeUsd - a.volumeUsd)
     .slice(0, 50);
 
+  /* Closed list is already sorted newest-first by the server. We don't
+     filter on volume — newest closures matter even at low volume. */
   const closed: PolymarketBet[] = closedRaw
     .map((m, i) => gammaToBet(m, i, true))
     .filter((b): b is PolymarketBet => b !== null)
-    .sort((a, b) => b.volumeUsd - a.volumeUsd)
     .slice(0, 50);
 
-  const split: PolymarketSplit = { ongoing, closed };
+  /* Trending uses the same source as ongoing (24h volume desc) but we
+     dedupe IDs that are also in ongoing's top 5 since those appear at
+     the top of the Ongoing tab already and would be redundant. We
+     prefer markets that aren't yet visible elsewhere. */
+  const ongoingTopIds = new Set(ongoing.slice(0, 5).map((b) => b.id));
+  const trending: PolymarketBet[] = trendingRaw
+    .map((m, i) => gammaToBet(m, i, false))
+    .filter(
+      (b): b is PolymarketBet =>
+        b !== null && b.volumeUsd > 0 && !ongoingTopIds.has(b.id),
+    )
+    .slice(0, 50);
 
-  if (ongoing.length > 0 || closed.length > 0) {
+  const split: PolymarketSplit = {
+    ongoing,
+    closed,
+    trending,
+    generatedAt: Date.now(),
+  };
+
+  if (ongoing.length > 0 || closed.length > 0 || trending.length > 0) {
     cache.set("split", split);
     return split;
   }
