@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useState } from "react";
 import type { PredictionResponse } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import PredictionCard from "./PredictionCard";
 import MarketTable from "./MarketTable";
 import AltSeasonGauge from "./AltSeasonGauge";
 import type { CryptoRow, StockRow } from "@/lib/alpha/topMarketsClient";
+
+const REFRESH_MS = 90_000;
 
 interface MarketsResp {
   crypto: CryptoRow[];
@@ -15,6 +18,7 @@ interface MarketsResp {
 }
 
 export default function PredictionsSection() {
+  const { reportRefresh } = useRefreshContext();
   const [data, setData] = useState<PredictionResponse | null>(null);
   const [markets, setMarkets] = useState<MarketsResp | null>(null);
   const [, setMarketsErr] = useState(false);
@@ -23,15 +27,19 @@ export default function PredictionsSection() {
   const [tab, setTab] = useState<"ai" | "crypto" | "stocks">("ai");
 
   const load = useCallback(async () => {
-    setLoading(true);
+    /* Don't toggle the loading spinner on background re-fetches —
+       only on the very first load. */
     setError(null);
     setMarketsErr(false);
     const [pred, mkt] = await Promise.all([
       alphaGet<PredictionResponse>("/api/alpha/predict"),
       alphaGet<MarketsResp>("/api/alpha/markets"),
     ]);
-    if (!pred) setError("Couldn't reach the prediction engine.");
-    else setData(pred);
+    if (!pred) {
+      if (data === null) setError("Couldn't reach the prediction engine.");
+    } else {
+      setData(pred);
+    }
 
     if (mkt) {
       setMarkets(mkt);
@@ -42,10 +50,19 @@ export default function PredictionsSection() {
       setMarketsErr(true);
     }
     setLoading(false);
-  }, []);
+    /* Both endpoints are 5min-cached server-side (predict for cost,
+       markets for traffic). Page polling at 90s is safe — server returns
+       cached data when it's fresh. */
+    if (pred || mkt) reportRefresh();
+  }, [data, reportRefresh]);
 
   useEffect(() => {
     void load();
+    const handle = window.setInterval(() => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    }, REFRESH_MS);
+    return () => window.clearInterval(handle);
   }, [load]);
 
   return (

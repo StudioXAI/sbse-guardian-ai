@@ -1,26 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import type { SocialPost } from "@/lib/alpha/types";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import { timeAgo } from "@/lib/alpha/format";
 
 const INFI_X_URL = "https://x.com/INFI_MultiChain";
 const INFI_LINKEDIN_URL = "https://www.linkedin.com/company/infi-multichain-cdex/";
+const REFRESH_MS = 90_000;
 
 export default function InfiSection() {
-  const [latest, setLatest] = useState<SocialPost[] | null>(null);
+  const { reportRefresh } = useRefreshContext();
+
+  const loader = useCallback(async () => {
+    return alphaGet<SocialPost[]>("/api/alpha/social");
+  }, []);
+
+  const { data: latest, lastRefreshedAt } = useAutoRefresh<SocialPost[]>(
+    loader,
+    REFRESH_MS,
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await alphaGet<SocialPost[]>("/api/alpha/social");
-      if (!cancelled) setLatest(data ?? []);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
 
   return (
     <div className="space-y-5">

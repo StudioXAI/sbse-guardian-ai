@@ -1,31 +1,31 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import type {
   RadarPoint,
   LiquidityHeatmapData,
 } from "@/lib/alpha/liquidityRadar";
 
+const REFRESH_MS = 90_000;
+
 export default function LiquidityRadar() {
-  const [data, setData] = useState<LiquidityHeatmapData | null>(null);
+  const { reportRefresh } = useRefreshContext();
+
+  const loader = useCallback(async () => {
+    return alphaGet<LiquidityHeatmapData>("/api/alpha/liquidity-radar");
+  }, []);
+
+  const { data, lastRefreshedAt } = useAutoRefresh<LiquidityHeatmapData>(
+    loader,
+    REFRESH_MS,
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const result = await alphaGet<LiquidityHeatmapData>(
-        "/api/alpha/liquidity-radar",
-      );
-      if (!cancelled) {
-        setData(
-          result ?? { points: [], insights: [], generatedAt: Date.now() },
-        );
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
 
   if (data === null) {
     return (

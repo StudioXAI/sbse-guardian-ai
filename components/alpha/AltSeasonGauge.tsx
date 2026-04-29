@@ -1,26 +1,28 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import type { AltSeasonData } from "@/lib/alpha/altSeasonIndex";
 
+const REFRESH_MS = 90_000;
+
 export default function AltSeasonGauge() {
-  const [data, setData] = useState<AltSeasonData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { reportRefresh } = useRefreshContext();
+
+  const loader = useCallback(async () => {
+    return alphaGet<AltSeasonData>("/api/alpha/altseason");
+  }, []);
+
+  const { data, loading, lastRefreshedAt } = useAutoRefresh<AltSeasonData>(
+    loader,
+    REFRESH_MS,
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const result = await alphaGet<AltSeasonData>("/api/alpha/altseason");
-      if (!cancelled) {
-        setData(result);
-        setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
 
   /* Hide entirely while loading — the rest of the predictions tab has
      content that loads in parallel so there's no empty UI. */

@@ -283,7 +283,7 @@ async function fetchTokenTransfersForChain(
     `${ETHERSCAN_V2_API}?chainid=${chainId}` +
     `&module=account&action=tokentx` +
     `&contractaddress=${contract}` +
-    `&page=1&offset=10000&sort=desc&apikey=${apiKey}`;
+    `&page=1&offset=1000&sort=desc&apikey=${apiKey}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
@@ -309,41 +309,138 @@ async function fetchTokenTransfersForChain(
 /* ═══════════════════════════════════════════════════════════ */
 
 /**
- * Given a transfer, decide if it's a buy or a sell.
+ * Classify a token transfer.
  *
- * BUY:  tokens FROM (DEX router OR CEX wallet) TO (unknown wallet)
- *       - DEX: swap output → user received tokens
- *       - CEX: user withdrew tokens after buying on exchange
+ * The strict CEX-vs-DEX classifier was too narrow because Etherscan's
+ * tokentx endpoint reports transfers at the POOL level, not the router
+ * level. Pool/pair contracts are not in our label set (there are
+ * thousands of them, one per token pair × fee tier), so the strict
+ * filter rejected most real swap activity.
  *
- * SELL: tokens FROM (unknown wallet) TO (DEX router OR CEX wallet)
- *       - DEX: user sent tokens for swap
- *       - CEX: user deposited tokens (typically to sell)
+ * New approach: surface ALL $50K+ transfers, but tag them based on
+ * counterparty patterns so the user can still see signal:
  *
- * If both endpoints are CEX/DEX, skip (internal exchange shuffling).
- * If neither is CEX/DEX, skip (we can't classify).
+ *   - From = known CEX  → "buy"  (user withdrew tokens after buying)
+ *   - To   = known CEX  → "sell" (user deposited tokens, usually to sell)
+ *   - From = MEV bot    → "buy"  (MEV bot got tokens, often after extraction)
+ *   - To   = MEV bot    → "sell" (someone sent tokens to a known MEV operator)
+ *   - From-side address looks contract-y AND high-frequency in this fetch
+ *     → likely a DEX pool  → tag as "swap" (treat as buy if to is EOA)
+ *   - Otherwise → "transfer" (still shown — wallet-to-wallet movement
+ *     of $50K+ is informative even without buy/sell semantics)
+ *
+ * We never skip a transfer over threshold. Worst case it shows up as
+ * a generic transfer. The user can still see the wallets, the amount,
+ * and click through to the explorer.
  */
 function classify(
   chainId: number,
   from: string,
   to: string,
-): { side: TradeSide; whale: string; counterparty: string; cpType: "cex" | "dex" } | null {
+  highFreqAddresses: Set<string>,
+): {
+  side: TradeSide;
+  whale: string;
+  counterparty: string;
+  cpType: "cex" | "dex" | "mev" | "pool" | "transfer";
+  cpFallbackLabel: string;
+} {
   const fromCat = getWalletCategory(chainId, from);
   const toCat = getWalletCategory(chainId, to);
 
-  /* Skip if both ends are exchange/router infrastructure. */
-  if ((fromCat === "cex" || fromCat === "dex") && (toCat === "cex" || toCat === "dex")) {
-    return null;
+  /* CEX-driven trades — strongest signal. */
+  if (fromCat === "cex") {
+    return {
+      side: "buy",
+      whale: to,
+      counterparty: from,
+      cpType: "cex",
+      cpFallbackLabel: "CEX",
+    };
+  }
+  if (toCat === "cex") {
+    return {
+      side: "sell",
+      whale: from,
+      counterparty: to,
+      cpType: "cex",
+      cpFallbackLabel: "CEX",
+    };
   }
 
-  /* From = exchange/router → BUY (whale receiving) */
-  if (fromCat === "cex" || fromCat === "dex") {
-    return { side: "buy", whale: to, counterparty: from, cpType: fromCat };
+  /* MEV-side trades — show but mark distinctly. */
+  if (fromCat === "mev") {
+    return {
+      side: "buy",
+      whale: to,
+      counterparty: from,
+      cpType: "mev",
+      cpFallbackLabel: "MEV bot",
+    };
   }
-  /* To = exchange/router → SELL (whale sending) */
-  if (toCat === "cex" || toCat === "dex") {
-    return { side: "sell", whale: from, counterparty: to, cpType: toCat };
+  if (toCat === "mev") {
+    return {
+      side: "sell",
+      whale: from,
+      counterparty: to,
+      cpType: "mev",
+      cpFallbackLabel: "MEV bot",
+    };
   }
-  return null;
+
+  /* Known DEX router (rare in tokentx, but possible for some routers). */
+  if (fromCat === "dex") {
+    return {
+      side: "buy",
+      whale: to,
+      counterparty: from,
+      cpType: "dex",
+      cpFallbackLabel: "DEX router",
+    };
+  }
+  if (toCat === "dex") {
+    return {
+      side: "sell",
+      whale: from,
+      counterparty: to,
+      cpType: "dex",
+      cpFallbackLabel: "DEX router",
+    };
+  }
+
+  /* Heuristic: high-frequency endpoint in this fetch is almost
+     certainly a pool/aggregator/contract. Use it as the counterparty
+     and treat the other side as the whale. */
+  const fromHighFreq = highFreqAddresses.has(from);
+  const toHighFreq = highFreqAddresses.has(to);
+  if (fromHighFreq && !toHighFreq) {
+    return {
+      side: "buy",
+      whale: to,
+      counterparty: from,
+      cpType: "pool",
+      cpFallbackLabel: "DEX pool",
+    };
+  }
+  if (toHighFreq && !fromHighFreq) {
+    return {
+      side: "sell",
+      whale: from,
+      counterparty: to,
+      cpType: "pool",
+      cpFallbackLabel: "DEX pool",
+    };
+  }
+  /* Both sides are high-frequency or both are low-frequency — treat
+     as wallet-to-wallet transfer. We arbitrarily make `from` the whale
+     and `to` the counterparty so it sorts into the "sell" pile. */
+  return {
+    side: "sell",
+    whale: from,
+    counterparty: to,
+    cpType: "transfer",
+    cpFallbackLabel: "Wallet",
+  };
 }
 
 function processTransfers(
@@ -353,6 +450,26 @@ function processTransfers(
   priceUsd: number,
   cutoffTs: number,
 ): TokenTrade[] {
+  /* First pass: count address frequency in this batch so we can
+     identify likely pool/contract addresses. Anything appearing 5+
+     times as either from or to is treated as infrastructure. */
+  const addressFreq = new Map<string, number>();
+  for (const tx of transfers) {
+    if (tx.from) {
+      const f = tx.from.toLowerCase();
+      addressFreq.set(f, (addressFreq.get(f) ?? 0) + 1);
+    }
+    if (tx.to) {
+      const t = tx.to.toLowerCase();
+      addressFreq.set(t, (addressFreq.get(t) ?? 0) + 1);
+    }
+  }
+  const HIGH_FREQ_THRESHOLD = 5;
+  const highFreqAddresses = new Set<string>();
+  for (const [addr, count] of addressFreq.entries()) {
+    if (count >= HIGH_FREQ_THRESHOLD) highFreqAddresses.add(addr);
+  }
+
   const out: TokenTrade[] = [];
   for (const tx of transfers) {
     const ts = parseInt(tx.timeStamp ?? "0", 10) * 1000;
@@ -362,33 +479,56 @@ function processTransfers(
     const to = (tx.to ?? "").toLowerCase();
     if (!from || !to || !tx.value || !tx.hash) continue;
 
-    /* Classify based on counterparty types */
-    const c = classify(chain.chainId, from, to);
-    if (!c) continue;
+    /* Skip null-address mints/burns (USDT/USDC issuance), they're
+       not real market activity. */
+    if (
+      from === "0x0000000000000000000000000000000000000000" ||
+      to === "0x0000000000000000000000000000000000000000"
+    ) {
+      continue;
+    }
 
-    /* Compute USD value */
-    const rawValue = BigInt(tx.value);
-    const divisor = BigInt(10) ** BigInt(chain.decimals);
-    const wholePart = Number(rawValue / divisor);
-    const fracPart =
-      Number(rawValue % divisor) / Number(divisor);
-    const amount = wholePart + fracPart;
+    /* Compute USD value first — most rows fail the threshold and
+       we save downstream work. */
+    let amount: number;
+    try {
+      const rawValue = BigInt(tx.value);
+      const divisor = BigInt(10) ** BigInt(chain.decimals);
+      const wholePart = Number(rawValue / divisor);
+      const fracPart = Number(rawValue % divisor) / Number(divisor);
+      amount = wholePart + fracPart;
+    } catch {
+      continue;
+    }
     const amountUsd = amount * priceUsd;
     if (amountUsd < MIN_USD_THRESHOLD) continue;
 
+    /* Classify with the broader heuristic. */
+    const c = classify(chain.chainId, from, to, highFreqAddresses);
+
+    /* Check both sides for MEV — sometimes the bot is the
+       counterparty rather than the whale. */
+    const whaleIsMev = isMevWallet(chain.chainId, c.whale);
+    const counterpartyIsMev = isMevWallet(chain.chainId, c.counterparty);
+    const isMev = whaleIsMev || counterpartyIsMev;
+
     const cpLabel = getWalletLabel(chain.chainId, c.counterparty);
     const whaleLabel = getWalletLabel(chain.chainId, c.whale);
-    const whaleIsMev = isMevWallet(chain.chainId, c.whale);
+
+    /* Map our extended cpType to the public-facing one ("cex" or "dex"
+       only — UI consumers don't care about the internal distinction). */
+    const publicCpType: "cex" | "dex" =
+      c.cpType === "cex" ? "cex" : "dex";
 
     out.push({
-      id: `${tx.hash}-${c.side}`,
+      id: `${tx.hash}-${c.side}-${chain.chainId}`,
       side: c.side,
       whaleAddress: c.whale,
       whaleLabel: whaleLabel?.label,
-      isMev: whaleIsMev,
+      isMev,
       counterpartyAddress: c.counterparty,
-      counterpartyLabel: cpLabel?.label ?? "Exchange",
-      counterpartyType: c.cpType,
+      counterpartyLabel: cpLabel?.label ?? c.cpFallbackLabel,
+      counterpartyType: publicCpType,
       symbol: token.symbol,
       chain: chain.chainName,
       chainId: chain.chainId,
@@ -427,8 +567,10 @@ export async function fetchTokenWhales(): Promise<TokenWhalesPayload> {
   /* Build the list of (token, chain) pairs to fetch.
      Total request count = sum over all tokens of their chain count.
      For our universe: ~30 calls per refresh, cached 90s = 1200/day = well
-     under Etherscan's 100k/day free tier. */
-  const fetchTasks: Promise<TokenTrade[]>[] = [];
+     under Etherscan's 100k/day daily limit. We also throttle to 5
+     calls/sec to respect the free-tier rate cap. */
+  type Task = () => Promise<TokenTrade[]>;
+  const tasks: Task[] = [];
   let scannedCount = 0;
 
   for (const token of TOKENS) {
@@ -436,25 +578,34 @@ export async function fetchTokenWhales(): Promise<TokenWhalesPayload> {
     if (!price || price <= 0) continue;
     for (const chain of token.chains) {
       scannedCount++;
-      fetchTasks.push(
-        (async () => {
-          const txs = await fetchTokenTransfersForChain(
-            apiKey,
-            chain.chainId,
-            chain.contract,
-          );
-          return processTransfers(txs, token, chain, price, cutoffTs);
-        })(),
-      );
+      tasks.push(async () => {
+        const txs = await fetchTokenTransfersForChain(
+          apiKey,
+          chain.chainId,
+          chain.contract,
+        );
+        return processTransfers(txs, token, chain, price, cutoffTs);
+      });
     }
   }
 
-  /* Run all fetches in parallel. Etherscan v2 free tier: 5 req/sec.
-     We're doing ~30 in parallel which can spike, but it usually works
-     because the server-side cache absorbs retries. If we hit rate limits,
-     individual fetches return [] gracefully. */
-  const results = await Promise.all(fetchTasks);
-  const allTrades = results.flat();
+  /* Throttle to 5 concurrent requests at a time. With 30 tasks this
+     finishes in ~6 sequential batches over ~2-3 seconds — well inside
+     the function's 60-second timeout. */
+  const CONCURRENCY = 5;
+  const allTrades: TokenTrade[] = [];
+  for (let i = 0; i < tasks.length; i += CONCURRENCY) {
+    const batch = tasks.slice(i, i + CONCURRENCY);
+    const results = await Promise.all(batch.map((t) => t()));
+    for (const r of results) {
+      for (const trade of r) allTrades.push(trade);
+    }
+    /* Small breather between batches to avoid the 5/sec cap when
+       Etherscan counts batches in tight windows. */
+    if (i + CONCURRENCY < tasks.length) {
+      await new Promise((res) => setTimeout(res, 250));
+    }
+  }
 
   /* Split into buys and sells, sort by USD desc. */
   const buys = allTrades

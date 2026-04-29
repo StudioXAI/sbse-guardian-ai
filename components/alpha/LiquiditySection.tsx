@@ -1,16 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type {
   LiquidityMap,
   LiquidityProtocol,
 } from "@/lib/alpha/liquidityClient";
 import { alphaGet } from "@/lib/alpha/client";
+import { useAutoRefresh } from "@/lib/alpha/useAutoRefresh";
+import { useRefreshContext } from "@/lib/alpha/refreshContext";
 import { directionFillVar } from "./DirectionBadge";
 import { formatUsd } from "@/lib/alpha/format";
 import OrderBookDepth from "./OrderBookDepth";
 import LiquidityRadar from "./LiquidityRadar";
 import TradingViewWidget from "./TradingViewWidget";
+
+const REFRESH_MS = 90_000;
 
 type LiqTab = "tvl" | "orderbook" | "radar" | "charts";
 
@@ -80,18 +84,17 @@ export default function LiquiditySection() {
 /* ─── TVL panel (was DefiLlama panel, neutral-labeled now) ─── */
 
 function TvlPanel() {
-  const [map, setMap] = useState<LiquidityMap | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const data = await alphaGet<LiquidityMap>("/api/alpha/liquidity");
-      if (!cancelled) setMap(data ?? null);
-    })();
-    return () => {
-      cancelled = true;
-    };
+  const { reportRefresh } = useRefreshContext();
+  const loader = useCallback(async () => {
+    return alphaGet<LiquidityMap>("/api/alpha/liquidity");
   }, []);
+  const { data: map, lastRefreshedAt } = useAutoRefresh<LiquidityMap>(
+    loader,
+    REFRESH_MS,
+  );
+  useEffect(() => {
+    if (lastRefreshedAt !== null) reportRefresh();
+  }, [lastRefreshedAt, reportRefresh]);
 
   if (map === null) {
     return (
