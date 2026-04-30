@@ -32,10 +32,12 @@ export interface TraceNode {
   hop: number;
   /** "backward" = where this wallet got funds from; "forward" = where it sent funds. */
   direction: "backward" | "forward" | "origin";
-  /** ETH/native amount that flowed in this hop, in human units. */
+  /** Native asset amount when applicable. 0 for token-only flows. */
   nativeAmount: number;
-  /** Approximate USD value (using a static heuristic since we don't fetch token prices per trace). */
+  /** Approximate USD value of this hop's flow. */
   approxUsd: number;
+  /** Human-readable description of what was transferred ("12.4K USDC", "0.5 ETH", "1.2K USDT + 200 WETH"). */
+  flowDescription?: string;
   /** True if the trace stopped here (terminal — CEX or hop limit). */
   isTerminal: boolean;
   /** Tx hash for this hop. */
@@ -76,42 +78,66 @@ interface EtherscanTx {
   value?: string;
 }
 
+/* Tracker for tokens we encounter during trace — symbol resolution
+   isn't critical (Etherscan tokentx returns symbol directly). */
+interface TokenTxRecord {
+  hash: string;
+  timeStamp: string;
+  from: string;
+  to: string;
+  value: string; // raw token units
+  tokenSymbol: string;
+  tokenDecimal: string; // string-encoded number
+  contractAddress: string;
+}
+
 /**
- * Fetch normal (native) transactions for an address. We use this
- * for trace because token transfers complicate the "follow the
- * money" view (each hop could be a different token). Native
- * transfers are simpler and usually capture the gas/seed flow.
+ * Fetch both native and token transactions for an address. Native
+ * transfers come from txlist; token transfers come from tokentx.
+ * Merging both gives us a much richer view of fund flow — most
+ * wallets people want to trace are token-active (not native-active).
  */
 async function fetchAddressTxs(
   apiKey: string,
   chainId: number,
   address: string,
-): Promise<EtherscanTx[]> {
-  const url =
-    `${ETHERSCAN_V2}?chainid=${chainId}` +
-    `&module=account&action=txlist` +
-    `&address=${address}` +
+): Promise<{ native: EtherscanTx[]; tokens: TokenTxRecord[] }> {
+  const baseUrl = `${ETHERSCAN_V2}?chainid=${chainId}`;
+  const txlistUrl =
+    `${baseUrl}&module=account&action=txlist&address=${address}` +
+    `&page=1&offset=200&sort=desc&apikey=${apiKey}`;
+  const tokentxUrl =
+    `${baseUrl}&module=account&action=tokentx&address=${address}` +
     `&page=1&offset=200&sort=desc&apikey=${apiKey}`;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: "application/json" },
-    });
-    if (!res.ok) return [];
-    const json = (await res.json()) as {
-      status?: string;
-      result?: EtherscanTx[] | string;
-    };
-    if (json.status !== "1" || !Array.isArray(json.result)) return [];
-    return json.result;
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timer);
+  async function safeFetch<T>(url: string): Promise<T[]> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) return [];
+      const json = (await res.json()) as {
+        status?: string;
+        result?: T[] | string;
+      };
+      if (json.status !== "1" || !Array.isArray(json.result)) return [];
+      return json.result;
+    } catch {
+      return [];
+    } finally {
+      clearTimeout(timer);
+    }
   }
+
+  const [native, tokens] = await Promise.all([
+    safeFetch<EtherscanTx>(txlistUrl),
+    safeFetch<TokenTxRecord>(tokentxUrl),
+  ]);
+
+  return { native, tokens };
 }
 
 /**
@@ -141,45 +167,145 @@ const NATIVE_PRICE_USD: Record<number, number> = {
   8453: 3500, // ETH on Base
 };
 
+/* Approximate USD prices for major tokens to rank token transfers.
+   We don't need precise prices — the trace just shows the most
+   informative single-path. Anything not in this map gets a
+   nominal value (1 unit) so it's still considered. */
+const TOKEN_USD_HEURISTIC: Record<string, number> = {
+  // Stablecoins — value ≈ $1
+  USDT: 1, USDC: 1, DAI: 1, BUSD: 1, TUSD: 1, USDE: 1, FDUSD: 1, PYUSD: 1,
+  // Wrapped natives — track ETH-ish value
+  WETH: 3500, WBNB: 600, WMATIC: 0.6, WAVAX: 30,
+  // Major liquids — rough recent prices
+  WBTC: 95000, BTCB: 95000,
+  LINK: 18, UNI: 9, AAVE: 130, MKR: 2200, COMP: 60,
+  // Mid-cap reference (rough — better than 1)
+  ARB: 0.6, OP: 1.5, MATIC: 0.6,
+};
+
+interface FlowEntry {
+  /** Counterparty address. */
+  address: string;
+  /** Best-effort USD value of the cumulative flow with this counterparty. */
+  approxUsd: number;
+  /** Most recent tx hash with this counterparty (for display + next-hop lookup). */
+  lastTx: string;
+  /** Description of what was transferred (e.g. "0.5 ETH" or "12.4 WETH + 320 USDC"). */
+  description: string;
+}
+
 /**
- * Process a wallet's transactions and return its top inflows and
- * outflows (excluding self-transfers and dust).
+ * Process native + token transfers and return top inflows / outflows
+ * by approximate USD value. Each counterparty entry aggregates all
+ * activity (multiple transfers in either direction).
  */
 function summarizeFlow(
-  txs: EtherscanTx[],
+  txs: { native: EtherscanTx[]; tokens: TokenTxRecord[] },
   walletAddress: string,
+  chainId: number,
   cutoffTs: number,
-): { inflows: Map<string, { amount: number; lastTx: string }>; outflows: Map<string, { amount: number; lastTx: string }> } {
+): { inflows: Map<string, FlowEntry>; outflows: Map<string, FlowEntry> } {
   const wallet = walletAddress.toLowerCase();
-  const inflows = new Map<string, { amount: number; lastTx: string }>();
-  const outflows = new Map<string, { amount: number; lastTx: string }>();
+  const inflows = new Map<string, FlowEntry>();
+  const outflows = new Map<string, FlowEntry>();
+  const nativePrice = NATIVE_PRICE_USD[chainId] ?? 0;
 
-  for (const tx of txs) {
+  /* Helper to merge a transfer into the appropriate map. */
+  function addFlow(
+    target: Map<string, FlowEntry>,
+    counterparty: string,
+    approxUsd: number,
+    txHash: string,
+    description: string,
+  ) {
+    const existing = target.get(counterparty);
+    if (existing) {
+      existing.approxUsd += approxUsd;
+      /* Keep the most recent tx hash (txs are sorted desc, first wins). */
+      /* Combine descriptions — but cap to avoid run-on text. */
+      const combined = existing.description + " + " + description;
+      existing.description = combined.length > 80
+        ? existing.description // ignore if too long
+        : combined;
+    } else {
+      target.set(counterparty, {
+        address: counterparty,
+        approxUsd,
+        lastTx: txHash,
+        description,
+      });
+    }
+  }
+
+  /* Process native ETH transfers. */
+  for (const tx of txs.native) {
     const ts = parseInt(tx.timeStamp ?? "0", 10) * 1000;
     if (!Number.isFinite(ts) || ts < cutoffTs) continue;
     if (!tx.from || !tx.to || !tx.value || !tx.hash) continue;
 
     const from = tx.from.toLowerCase();
     const to = tx.to.toLowerCase();
-    if (from === to) continue; // self-transfer
+    if (from === to) continue;
 
     const amount = weiToNative(tx.value);
-    if (amount < 0.01) continue; // dust
+    if (amount < 0.001) continue; // ignore dust
+
+    /* Approximate USD using the chain's native asset price. */
+    const approxUsd = amount * nativePrice;
+    const description = `${amount.toFixed(4)} native`;
 
     if (to === wallet) {
-      const existing = inflows.get(from);
-      if (existing) {
-        existing.amount += amount;
-      } else {
-        inflows.set(from, { amount, lastTx: tx.hash });
-      }
+      addFlow(inflows, from, approxUsd, tx.hash, description);
     } else if (from === wallet) {
-      const existing = outflows.get(to);
-      if (existing) {
-        existing.amount += amount;
-      } else {
-        outflows.set(to, { amount, lastTx: tx.hash });
-      }
+      addFlow(outflows, to, approxUsd, tx.hash, description);
+    }
+  }
+
+  /* Process token transfers. */
+  for (const tx of txs.tokens) {
+    const ts = parseInt(tx.timeStamp ?? "0", 10) * 1000;
+    if (!Number.isFinite(ts) || ts < cutoffTs) continue;
+    if (!tx.from || !tx.to || !tx.value || !tx.hash) continue;
+
+    const from = tx.from.toLowerCase();
+    const to = tx.to.toLowerCase();
+    if (from === to) continue;
+
+    const decimals = parseInt(tx.tokenDecimal ?? "18", 10);
+    if (!Number.isFinite(decimals)) continue;
+
+    let amount: number;
+    try {
+      const raw = BigInt(tx.value);
+      const divisor = BigInt(10) ** BigInt(decimals);
+      const whole = Number(raw / divisor);
+      const frac = Number(raw % divisor) / Number(divisor);
+      amount = whole + frac;
+    } catch {
+      continue;
+    }
+    if (amount <= 0) continue;
+
+    const symbol = (tx.tokenSymbol ?? "").trim().toUpperCase();
+    const heuristic = TOKEN_USD_HEURISTIC[symbol];
+    /* Tokens not in our heuristic get a small nominal value so they
+       still surface but rank below known-priced flows. */
+    const approxUsd = heuristic ? amount * heuristic : Math.min(amount, 1000);
+    if (approxUsd < 100) continue; // ignore micro-transfers
+
+    /* Cap description so the UI doesn't get unwieldy. */
+    const amountStr =
+      amount >= 1000
+        ? `${(amount / 1000).toFixed(1)}K`
+        : amount >= 1
+        ? amount.toFixed(2)
+        : amount.toFixed(4);
+    const description = `${amountStr} ${symbol || "tokens"}`;
+
+    if (to === wallet) {
+      addFlow(inflows, from, approxUsd, tx.hash, description);
+    } else if (from === wallet) {
+      addFlow(outflows, to, approxUsd, tx.hash, description);
     }
   }
 
@@ -199,7 +325,6 @@ async function walkChain(
 ): Promise<TraceNode[]> {
   const out: TraceNode[] = [];
   const explorerBase = EXPLORER[chainId]?.base ?? "https://etherscan.io";
-  const nativePrice = NATIVE_PRICE_USD[chainId] ?? 0;
   const cutoffTs = Date.now() - TRACE_LOOKBACK_MS;
 
   let currentAddress = origin.toLowerCase();
@@ -208,19 +333,23 @@ async function walkChain(
 
   while (currentHop < MAX_HOPS) {
     const txs = await fetchAddressTxs(apiKey, chainId, currentAddress);
-    if (txs.length === 0) break;
+    if (txs.native.length === 0 && txs.tokens.length === 0) break;
 
-    const { inflows, outflows } = summarizeFlow(txs, currentAddress, cutoffTs);
+    const { inflows, outflows } = summarizeFlow(
+      txs,
+      currentAddress,
+      chainId,
+      cutoffTs,
+    );
     const flowMap = direction === "backward" ? inflows : outflows;
     if (flowMap.size === 0) break;
 
-    /* Pick the largest counterparty — most informative single-path trace. */
+    /* Pick the largest counterparty by approximate USD value. */
     const sorted = [...flowMap.entries()].sort(
-      (a, b) => b[1].amount - a[1].amount,
+      (a, b) => b[1].approxUsd - a[1].approxUsd,
     );
     const [nextAddr, info] = sorted[0];
 
-    /* Avoid loops */
     if (visited.has(nextAddr)) break;
     visited.add(nextAddr);
 
@@ -236,11 +365,16 @@ async function walkChain(
       category,
       hop: currentHop,
       direction,
-      nativeAmount: info.amount,
-      approxUsd: info.amount * nativePrice,
+      /* `nativeAmount` is now overloaded to mean "transfer amount" —
+         could be ETH or could be a token. The description field
+         carries the actual unit. We keep the field name for backward
+         compat with the existing UI component. */
+      nativeAmount: 0, // not meaningful when token transfers are involved
+      approxUsd: info.approxUsd,
       isTerminal,
       txHash: info.lastTx,
       explorerUrl: `${explorerBase}/address/${nextAddr}`,
+      flowDescription: info.description,
     });
 
     if (isTerminal) break;
@@ -300,7 +434,7 @@ function buildSummary(
   }
 
   parts.push(
-    "Trace covers native asset transfers only — token transfers may follow different paths.",
+    "Trace follows the largest single inflow/outflow per hop, including both native ETH and ERC20 token transfers. Smaller branching transfers are not shown.",
   );
 
   return parts.join(" ");

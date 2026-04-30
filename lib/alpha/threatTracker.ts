@@ -80,6 +80,21 @@ export interface ThreatGroups {
   largeTransfers: SuspiciousActivity[];
 }
 
+export interface ScannerDiagnostic {
+  /** Scanner name. */
+  name: string;
+  /** Whether this scanner ran without throwing. */
+  ok: boolean;
+  /** Error message if it threw or returned null. Empty when ok. */
+  error: string;
+  /** Total raw events seen on the wire (logs returned by eth_getLogs). */
+  eventsSeen: number;
+  /** Activities that survived classification + thresholds. */
+  flagged: number;
+  /** Time the scanner took, in milliseconds. */
+  durationMs: number;
+}
+
 export interface ThreatsPayload {
   groups: ThreatGroups;
   riskEvents: RiskEvent[];
@@ -92,6 +107,10 @@ export interface ThreatsPayload {
     lendingEventsSeen: number;
     transfersSeen: number;
   };
+  /** Per-scanner diagnostics — visible in the panel for debugging. */
+  diagnostics: ScannerDiagnostic[];
+  /** First chain's tip block — useful diagnostic. */
+  tipBlocks: Array<{ chain: string; block: number }>;
   unconfigured: boolean;
   scannerStatus: {
     quicknodeConfigured: boolean;
@@ -270,6 +289,8 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
       generatedAt: Date.now(),
       chainsScanned: [],
       scanStats: emptyStats,
+      diagnostics: [],
+      tipBlocks: [],
       unconfigured: true,
       scannerStatus: { quicknodeConfigured, etherscanConfigured },
     };
@@ -280,46 +301,181 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
     ? await fetchTipBlocks(enabledChains)
     : new Map<SupportedChain, number>();
 
-  /* Run all five scanners in parallel. Each is independently
-     defensive — failures are caught locally and return empty
-     results rather than crashing the whole pipeline. */
+  /* Build the tipBlocks list for the diagnostic payload. */
+  const tipBlocksReport: Array<{ chain: string; block: number }> = [];
+  for (const [chain, block] of tipBlocks.entries()) {
+    tipBlocksReport.push({ chain, block });
+  }
+
+  /* Wrap each scanner with timing + error capture so failures
+     are visible in the UI rather than silently producing zeros. */
+  type WrappedResult<T> = {
+    name: string;
+    result: T | null;
+    error: string;
+    durationMs: number;
+  };
+
+  async function wrap<T>(
+    name: string,
+    promise: Promise<T>,
+  ): Promise<WrappedResult<T>> {
+    const start = Date.now();
+    try {
+      const result = await promise;
+      return { name, result, error: "", durationMs: Date.now() - start };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return {
+        name,
+        result: null,
+        error: msg.slice(0, 200), // truncate for UI display
+        durationMs: Date.now() - start,
+      };
+    }
+  }
+
+  /* Run all five scanners in parallel with diagnostics. */
   const [
-    uniswapResult,
-    extendedDexResult,
-    removalResult,
-    lendingResult,
-    transferResult,
-    riskEvents,
+    uniswapWrapped,
+    extendedDexWrapped,
+    removalWrapped,
+    lendingWrapped,
+    transferWrapped,
+    riskEventsWrapped,
   ] = await Promise.all([
     quicknodeConfigured
-      ? scanUniswap().catch(() => null as UniswapScanResult | null)
-      : Promise.resolve(null),
+      ? wrap("Uniswap V2/V3", scanUniswap())
+      : Promise.resolve<WrappedResult<UniswapScanResult>>({
+          name: "Uniswap V2/V3",
+          result: null,
+          error: "QuickNode not configured",
+          durationMs: 0,
+        }),
     quicknodeConfigured
-      ? scanExtendedDex(enabledChains, tipBlocks).catch(() => ({
-          activities: [],
-          totalEventsSeen: 0,
-        }))
-      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
+      ? wrap("Curve + Balancer", scanExtendedDex(enabledChains, tipBlocks))
+      : Promise.resolve<
+          WrappedResult<{ activities: SuspiciousActivity[]; totalEventsSeen: number }>
+        >({
+          name: "Curve + Balancer",
+          result: null,
+          error: "QuickNode not configured",
+          durationMs: 0,
+        }),
     quicknodeConfigured
-      ? scanLiquidityRemovals(enabledChains, tipBlocks).catch(() => ({
-          activities: [],
-          totalEventsSeen: 0,
-        }))
-      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
+      ? wrap(
+          "Liquidity removals",
+          scanLiquidityRemovals(enabledChains, tipBlocks),
+        )
+      : Promise.resolve<
+          WrappedResult<{ activities: SuspiciousActivity[]; totalEventsSeen: number }>
+        >({
+          name: "Liquidity removals",
+          result: null,
+          error: "QuickNode not configured",
+          durationMs: 0,
+        }),
     quicknodeConfigured
-      ? scanLendingActivity(enabledChains, tipBlocks).catch(() => ({
-          activities: [],
-          totalEventsSeen: 0,
-        }))
-      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
+      ? wrap("Aave V3 lending", scanLendingActivity(enabledChains, tipBlocks))
+      : Promise.resolve<
+          WrappedResult<{ activities: SuspiciousActivity[]; totalEventsSeen: number }>
+        >({
+          name: "Aave V3 lending",
+          result: null,
+          error: "QuickNode not configured",
+          durationMs: 0,
+        }),
     quicknodeConfigured
-      ? scanLargeTransfers(enabledChains, tipBlocks).catch(() => ({
-          activities: [],
-          totalEventsSeen: 0,
-        }))
-      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
-    etherscanConfigured ? scanRiskEvents() : Promise.resolve([] as RiskEvent[]),
+      ? wrap("Large transfers", scanLargeTransfers(enabledChains, tipBlocks))
+      : Promise.resolve<
+          WrappedResult<{ activities: SuspiciousActivity[]; totalEventsSeen: number }>
+        >({
+          name: "Large transfers",
+          result: null,
+          error: "QuickNode not configured",
+          durationMs: 0,
+        }),
+    etherscanConfigured
+      ? wrap("Risk events (Etherscan)", scanRiskEvents())
+      : Promise.resolve<WrappedResult<RiskEvent[]>>({
+          name: "Risk events (Etherscan)",
+          result: null,
+          error: "Etherscan API key not set",
+          durationMs: 0,
+        }),
   ]);
+
+  /* Unwrap results, defaulting to empty when null. */
+  const uniswapResult = uniswapWrapped.result;
+  const extendedDexResult = extendedDexWrapped.result ?? {
+    activities: [],
+    totalEventsSeen: 0,
+  };
+  const removalResult = removalWrapped.result ?? {
+    activities: [],
+    totalEventsSeen: 0,
+  };
+  const lendingResult = lendingWrapped.result ?? {
+    activities: [],
+    totalEventsSeen: 0,
+  };
+  const transferResult = transferWrapped.result ?? {
+    activities: [],
+    totalEventsSeen: 0,
+  };
+  const riskEvents = riskEventsWrapped.result ?? [];
+
+  /* Build diagnostics list */
+  const diagnostics: ScannerDiagnostic[] = [
+    {
+      name: uniswapWrapped.name,
+      ok: uniswapWrapped.error === "" && uniswapResult !== null,
+      error: uniswapWrapped.error,
+      eventsSeen: uniswapResult?.totalEventsSeen ?? 0,
+      flagged: uniswapResult?.activities.length ?? 0,
+      durationMs: uniswapWrapped.durationMs,
+    },
+    {
+      name: extendedDexWrapped.name,
+      ok: extendedDexWrapped.error === "",
+      error: extendedDexWrapped.error,
+      eventsSeen: extendedDexResult.totalEventsSeen,
+      flagged: extendedDexResult.activities.length,
+      durationMs: extendedDexWrapped.durationMs,
+    },
+    {
+      name: removalWrapped.name,
+      ok: removalWrapped.error === "",
+      error: removalWrapped.error,
+      eventsSeen: removalResult.totalEventsSeen,
+      flagged: removalResult.activities.length,
+      durationMs: removalWrapped.durationMs,
+    },
+    {
+      name: lendingWrapped.name,
+      ok: lendingWrapped.error === "",
+      error: lendingWrapped.error,
+      eventsSeen: lendingResult.totalEventsSeen,
+      flagged: lendingResult.activities.length,
+      durationMs: lendingWrapped.durationMs,
+    },
+    {
+      name: transferWrapped.name,
+      ok: transferWrapped.error === "",
+      error: transferWrapped.error,
+      eventsSeen: transferResult.totalEventsSeen,
+      flagged: transferResult.activities.length,
+      durationMs: transferWrapped.durationMs,
+    },
+    {
+      name: riskEventsWrapped.name,
+      ok: riskEventsWrapped.error === "",
+      error: riskEventsWrapped.error,
+      eventsSeen: riskEventsWrapped.result?.length ?? 0,
+      flagged: riskEvents.length,
+      durationMs: riskEventsWrapped.durationMs,
+    },
+  ];
 
   /* Combine Uniswap + extended DEX (Curve/Balancer) into one DEX swaps
      bucket. Sort by severity, take top 8. */
@@ -349,18 +505,23 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
       lendingEventsSeen: lendingResult.totalEventsSeen,
       transfersSeen: transferResult.totalEventsSeen,
     },
+    diagnostics,
+    tipBlocks: tipBlocksReport,
     unconfigured: false,
     scannerStatus: { quicknodeConfigured, etherscanConfigured },
   };
 
-  /* Only cache if we got data — otherwise let the next request
-     try again (might be a transient RPC outage). */
+  /* Cache successes only — but ALSO cache "all scanners ran cleanly
+     but found nothing" so we don't hammer QuickNode every 90s on a
+     legitimately quiet scan window. The check is "no errors in
+     diagnostics" rather than "we found activities". */
+  const allScannersClean = diagnostics.every((d) => d.ok);
   const totalActivities =
     groups.dexSwaps.length +
     groups.liquidityRemovals.length +
     groups.lendingActivity.length +
     groups.largeTransfers.length;
-  if (totalActivities > 0 || riskEvents.length > 0) {
+  if (totalActivities > 0 || riskEvents.length > 0 || allScannersClean) {
     cache.set("payload", payload);
   }
   return payload;

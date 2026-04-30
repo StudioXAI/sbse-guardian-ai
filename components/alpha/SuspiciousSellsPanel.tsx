@@ -180,6 +180,180 @@ export default function SuspiciousSellsPanel({ data }: Props) {
           activities={data.groups[groupCfg.key]}
         />
       ))}
+
+      {/* Scanner diagnostics — visible by default when something looks
+          off (e.g. all zeros), collapsed by default when everything is
+          working cleanly. */}
+      {data.diagnostics && data.diagnostics.length > 0 && (
+        <ScannerDiagnostics
+          diagnostics={data.diagnostics}
+          tipBlocks={data.tipBlocks ?? []}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Scanner diagnostics — per-scanner status with errors visible
+   ───────────────────────────────────────────────────────────── */
+
+function ScannerDiagnostics({
+  diagnostics,
+  tipBlocks,
+}: {
+  diagnostics: NonNullable<ThreatsPayload["diagnostics"]>;
+  tipBlocks: NonNullable<ThreatsPayload["tipBlocks"]>;
+}) {
+  const hasErrors = diagnostics.some((d) => !d.ok);
+  const hasNoEvents = diagnostics.every((d) => d.eventsSeen === 0);
+  /* Auto-expand if there are errors or every scanner returned zero
+     events (suggests a deeper config issue). */
+  const [expanded, setExpanded] = useState(hasErrors || hasNoEvents);
+
+  return (
+    <div
+      className="card overflow-hidden"
+      style={{
+        borderLeft: hasErrors
+          ? "3px solid var(--danger)"
+          : "3px solid var(--border)",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="w-full p-3 flex items-center justify-between gap-2 transition-colors hover:bg-[var(--bg-elevated)]"
+        style={{ background: "transparent", border: "none", cursor: "pointer" }}
+      >
+        <div className="flex items-center gap-2 flex-wrap">
+          <span
+            className="label-xs"
+            style={{
+              color: hasErrors ? "var(--danger)" : "var(--fg-muted)",
+            }}
+          >
+            Scanner diagnostics
+          </span>
+          {hasErrors && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded font-mono"
+              style={{
+                background: "rgba(239,68,68,0.15)",
+                color: "var(--danger)",
+                letterSpacing: "0.05em",
+              }}
+            >
+              ERROR
+            </span>
+          )}
+          {!hasErrors && hasNoEvents && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded font-mono"
+              style={{
+                background: "rgba(245,158,11,0.15)",
+                color: "var(--warning, #f59e0b)",
+                letterSpacing: "0.05em",
+              }}
+            >
+              NO EVENTS
+            </span>
+          )}
+        </div>
+        <span
+          className="font-mono text-[11px]"
+          style={{ color: "var(--fg-dim)" }}
+        >
+          {expanded ? "−" : "+"}
+        </span>
+      </button>
+
+      {expanded && (
+        <div className="px-3 pb-3 space-y-2">
+          {/* Tip blocks */}
+          {tipBlocks.length > 0 && (
+            <div
+              className="text-[10px] font-mono flex flex-wrap gap-x-3 gap-y-1"
+              style={{ color: "var(--fg-dim)" }}
+            >
+              <span style={{ color: "var(--fg-muted)" }}>Tip blocks:</span>
+              {tipBlocks.map((tb) => (
+                <span key={tb.chain}>
+                  {tb.chain} #{tb.block.toLocaleString()}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Per-scanner status */}
+          <div className="space-y-1">
+            {diagnostics.map((d) => (
+              <div
+                key={d.name}
+                className="flex items-start justify-between gap-2 flex-wrap text-[11px] p-2 rounded"
+                style={{ background: "var(--bg-subtle)" }}
+              >
+                <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
+                  <span
+                    className="font-mono"
+                    style={{
+                      color: d.ok ? "var(--success, #10b981)" : "var(--danger)",
+                      fontSize: "10px",
+                    }}
+                  >
+                    {d.ok ? "✓" : "✗"}
+                  </span>
+                  <span
+                    className="font-mono"
+                    style={{
+                      color: "var(--fg)",
+                      fontSize: "11px",
+                      letterSpacing: "0.04em",
+                    }}
+                  >
+                    {d.name}
+                  </span>
+                  <span
+                    className="font-mono"
+                    style={{ color: "var(--fg-dim)", fontSize: "10px" }}
+                  >
+                    {d.eventsSeen.toLocaleString()} seen · {d.flagged} flagged
+                    · {d.durationMs}ms
+                  </span>
+                </div>
+                {d.error && (
+                  <div
+                    className="font-mono text-[10px]"
+                    style={{ color: "var(--danger)" }}
+                  >
+                    {d.error}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Helpful hint when nothing was found */}
+          {!hasErrors && hasNoEvents && (
+            <p
+              className="text-[11px] leading-relaxed mt-2"
+              style={{ color: "var(--fg-muted)" }}
+            >
+              All scanners ran cleanly but the chain returned zero events
+              in the scan window. This is unusual — Ethereum produces
+              hundreds of events per minute. Check that{" "}
+              <code style={{ color: "var(--accent-soft)" }}>
+                QUICKNODE_BASE_URL
+              </code>{" "}
+              actually points at a working endpoint by visiting the URL
+              directly (it should respond to JSON-RPC POST requests).
+              Common causes: typo in the env var, accidentally exposed
+              the URL elsewhere and the rate limiter blocked it, or the
+              endpoint is paused in the QuickNode dashboard.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

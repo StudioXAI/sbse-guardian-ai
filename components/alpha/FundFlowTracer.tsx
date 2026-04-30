@@ -56,10 +56,11 @@ export default function FundFlowTracer() {
           Trace any wallet's recent fund flow
         </div>
         <p className="text-[12px] mb-4" style={{ color: "var(--fg-dim)" }}>
-          Enter a wallet address and chain. We'll trace the largest single
-          path of inflows backward (where funds came from) and outflows
-          forward (where funds went). Stops at known exchanges or after 3
-          hops. Native asset transfers only — token paths may differ.
+          Enter a wallet address and chain. We trace the largest single path
+          of inflows backward (where funds came from) and outflows forward
+          (where funds went), following both native ETH and ERC20 token
+          transfers. Stops at known exchanges or after 3 hops. Smaller
+          branching transfers are not shown.
         </p>
 
         <div className="flex flex-wrap gap-2 mb-3">
@@ -281,7 +282,10 @@ function NodeRow({ node }: { node: TraceNode }) {
         </div>
         <div className="text-right text-[11px]">
           <div className="font-mono" style={{ color: "var(--fg)" }}>
-            {node.nativeAmount.toFixed(3)} ETH
+            {node.flowDescription ??
+              (node.nativeAmount > 0
+                ? `${node.nativeAmount.toFixed(3)} native`
+                : "—")}
           </div>
           <div className="text-[10px]" style={{ color: "var(--fg-dim)" }}>
             ~{formatUsd(node.approxUsd)}
