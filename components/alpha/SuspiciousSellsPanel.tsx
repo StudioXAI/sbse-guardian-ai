@@ -188,6 +188,8 @@ export default function SuspiciousSellsPanel({ data }: Props) {
         <ScannerDiagnostics
           diagnostics={data.diagnostics}
           tipBlocks={data.tipBlocks ?? []}
+          providerStats={data.providerStats ?? []}
+          providerRoutes={data.providerRoutes ?? []}
         />
       )}
     </div>
@@ -201,15 +203,25 @@ export default function SuspiciousSellsPanel({ data }: Props) {
 function ScannerDiagnostics({
   diagnostics,
   tipBlocks,
+  providerStats,
+  providerRoutes,
 }: {
   diagnostics: NonNullable<ThreatsPayload["diagnostics"]>;
   tipBlocks: NonNullable<ThreatsPayload["tipBlocks"]>;
+  providerStats: NonNullable<ThreatsPayload["providerStats"]>;
+  providerRoutes: NonNullable<ThreatsPayload["providerRoutes"]>;
 }) {
   const hasErrors = diagnostics.some((d) => !d.ok);
   const hasNoEvents = diagnostics.every((d) => d.eventsSeen === 0);
+  /* Provider failover detected — show this as a prominent state. */
+  const usedFallback = providerStats.some(
+    (p) => p.provider !== "QuickNode" && p.successes > 0,
+  );
   /* Auto-expand if there are errors or every scanner returned zero
      events (suggests a deeper config issue). */
-  const [expanded, setExpanded] = useState(hasErrors || hasNoEvents);
+  const [expanded, setExpanded] = useState(
+    hasErrors || hasNoEvents || usedFallback,
+  );
 
   return (
     <div
@@ -259,6 +271,19 @@ function ScannerDiagnostics({
               NO EVENTS
             </span>
           )}
+          {!hasErrors && usedFallback && (
+            <span
+              className="text-[9px] px-1.5 py-0.5 rounded font-mono"
+              style={{
+                background: "rgba(108,99,255,0.15)",
+                color: "var(--accent-soft)",
+                letterSpacing: "0.05em",
+              }}
+              title="Fallback RPC provider answered some calls — primary provider may be degraded"
+            >
+              FALLBACK ACTIVE
+            </span>
+          )}
         </div>
         <span
           className="font-mono text-[11px]"
@@ -269,7 +294,94 @@ function ScannerDiagnostics({
       </button>
 
       {expanded && (
-        <div className="px-3 pb-3 space-y-2">
+        <div className="px-3 pb-3 space-y-3">
+          {/* RPC provider stats — which providers actually answered */}
+          {providerStats.length > 0 && (
+            <div className="space-y-1">
+              <div
+                className="text-[10px] font-mono"
+                style={{
+                  color: "var(--fg-muted)",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                RPC PROVIDER USAGE THIS SCAN
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {providerStats.map((p) => {
+                  const total = p.successes + p.failures;
+                  const isPrimary = p.provider === "QuickNode";
+                  const isFallback = !isPrimary && p.successes > 0;
+                  const color = isFallback
+                    ? "var(--accent-soft)"
+                    : p.failures > p.successes
+                    ? "var(--danger)"
+                    : "var(--success, #10b981)";
+                  return (
+                    <div
+                      key={p.provider}
+                      className="font-mono text-[10px] px-2 py-1 rounded"
+                      style={{
+                        background: "var(--bg-subtle)",
+                        border: `1px solid ${color}`,
+                        color,
+                      }}
+                    >
+                      <span style={{ fontWeight: 600 }}>{p.provider}</span>
+                      <span
+                        style={{ color: "var(--fg-dim)", marginLeft: 6 }}
+                      >
+                        {p.successes}/{total}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+              {usedFallback && (
+                <p
+                  className="text-[10px] mt-1 leading-relaxed"
+                  style={{ color: "var(--fg-muted)" }}
+                >
+                  Fallback provider answered some calls — your primary
+                  (QuickNode) may be degraded, rate-limited, or
+                  misconfigured. Check the per-scanner status below for
+                  specific errors.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Configured provider routes per chain */}
+          {providerRoutes.length > 0 && (
+            <details className="text-[10px]">
+              <summary
+                className="cursor-pointer font-mono"
+                style={{
+                  color: "var(--fg-muted)",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                CONFIGURED ROUTES
+              </summary>
+              <div className="mt-2 space-y-1">
+                {providerRoutes.map((r) => (
+                  <div key={r.chain} className="flex flex-wrap gap-1">
+                    <span style={{ color: "var(--fg-dim)", minWidth: 80 }}>
+                      {r.chain}:
+                    </span>
+                    <span style={{ color: "var(--fg-muted)" }}>
+                      {r.providers.length === 0
+                        ? "no providers configured"
+                        : r.providers
+                            .map((p) => `${p.provider} → ${p.redactedUrl}`)
+                            .join("  ·  ")}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          )}
+
           {/* Tip blocks */}
           {tipBlocks.length > 0 && (
             <div

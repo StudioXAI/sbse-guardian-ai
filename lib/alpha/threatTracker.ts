@@ -23,7 +23,12 @@ import { TtlCache } from "./cache";
 import {
   getEnabledChains,
   getBlockNumber,
+  getProviderStats,
+  resetProviderStats,
+  getProviderRoutes,
   type SupportedChain,
+  type ProviderStats,
+  type ProviderRoute,
 } from "./quicknodeClient";
 import {
   scanForSuspiciousActivity as scanUniswap,
@@ -111,6 +116,11 @@ export interface ThreatsPayload {
   diagnostics: ScannerDiagnostic[];
   /** First chain's tip block — useful diagnostic. */
   tipBlocks: Array<{ chain: string; block: number }>;
+  /** Which RPC providers actually answered our calls in this scan.
+      Surfaces silent QuickNode failures by showing fallback usage. */
+  providerStats: ProviderStats[];
+  /** Configured provider chain per supported chain — diagnostic. */
+  providerRoutes: ProviderRoute[];
   unconfigured: boolean;
   scannerStatus: {
     quicknodeConfigured: boolean;
@@ -263,9 +273,13 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
   const cached = cache.get("payload");
   if (cached) return cached;
 
+  /* Reset provider stats — we want fresh per-scan attribution. */
+  resetProviderStats();
+
   const enabledChains = getEnabledChains();
   const quicknodeConfigured = enabledChains.length > 0;
   const etherscanConfigured = !!process.env.ETHERSCAN_API_KEY;
+  const providerRoutes = getProviderRoutes();
 
   /* Empty defaults so the UI never crashes on missing fields. */
   const emptyGroups: ThreatGroups = {
@@ -291,6 +305,8 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
       scanStats: emptyStats,
       diagnostics: [],
       tipBlocks: [],
+      providerStats: [],
+      providerRoutes,
       unconfigured: true,
       scannerStatus: { quicknodeConfigured, etherscanConfigured },
     };
@@ -507,6 +523,9 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
     },
     diagnostics,
     tipBlocks: tipBlocksReport,
+    /* Snapshot per-provider attribution AFTER all scanners have run. */
+    providerStats: getProviderStats(),
+    providerRoutes,
     unconfigured: false,
     scannerStatus: { quicknodeConfigured, etherscanConfigured },
   };
