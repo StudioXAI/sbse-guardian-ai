@@ -10,6 +10,7 @@ import SignalsSection from "@/components/alpha/SignalsSection";
 import PredictionsSection from "@/components/alpha/PredictionsSection";
 import LiquiditySection from "@/components/alpha/LiquiditySection";
 import WhalesSection from "@/components/alpha/WhalesSection";
+import ThreatsSection from "@/components/alpha/ThreatsSection";
 import PolymarketSection from "@/components/alpha/PolymarketSection";
 import InfiSection from "@/components/alpha/InfiSection";
 import SocialSection from "@/components/alpha/SocialSection";
@@ -107,6 +108,7 @@ function AlphaPageInner() {
             {section === "predictions" && <PredictionsSection />}
             {section === "liquidity" && <LiquiditySection />}
             {section === "whales" && <WhalesSection />}
+            {section === "threats" && <ThreatsSection />}
             {section === "polymarket" && <PolymarketSection />}
             {section === "infi" && <InfiSection />}
             {section === "social" && <SocialSection />}

@@ -189,6 +189,7 @@ export default function OverviewSection({ onNavigate }: Props) {
                 { id: "predictions", label: "AI predictions", desc: "Multi-asset forecast" },
                 { id: "liquidity", label: "Liquidity map", desc: "TVL, order book, heatmap" },
                 { id: "whales", label: "Whale tracker", desc: "$100K+ on-chain movements" },
+                { id: "threats", label: "Threat scanner", desc: "Suspicious sells & risk events" },
                 { id: "polymarket", label: "Polymarket bets", desc: "Real-money consensus" },
                 { id: "infi", label: "INFI ecosystem", desc: "Status, channels, alerts" },
                 { id: "social", label: "Social intel", desc: "Aggregated sentiment" },

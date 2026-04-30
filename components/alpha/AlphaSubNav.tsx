@@ -6,6 +6,7 @@ export type AlphaSection =
   | "predictions"
   | "liquidity"
   | "whales"
+  | "threats"
   | "polymarket"
   | "infi"
   | "social";
@@ -21,6 +22,7 @@ const SECTIONS: Array<{ id: AlphaSection; label: string }> = [
   { id: "predictions", label: "Predictions" },
   { id: "liquidity", label: "Liquidity" },
   { id: "whales", label: "Whales" },
+  { id: "threats", label: "Threats" },
   { id: "polymarket", label: "Polymarket" },
   { id: "infi", label: "INFI" },
   { id: "social", label: "Social" },
