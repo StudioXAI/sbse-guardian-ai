@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import InfiLogo from "./InfiLogo";
 
 interface SiteNavProps {
   /** Which tab is currently active. */
@@ -25,6 +26,28 @@ export default function SiteNav({ active }: SiteNavProps) {
         borderColor: "var(--border)",
       }}
     >
+      {/* Powered-by attribution — sits at the very top of every page */}
+      <div
+        className="border-b"
+        style={{
+          background: "rgba(0,0,0,0.25)",
+          borderColor: "var(--border)",
+        }}
+      >
+        <div className="max-w-6xl mx-auto px-6 py-1.5 flex items-center justify-center gap-2">
+          <InfiLogo size={16} />
+          <span
+            className="font-mono text-[10px] tracking-[0.15em] uppercase"
+            style={{ color: "var(--fg-dim)" }}
+          >
+            Powered by{" "}
+            <span style={{ color: "var(--fg-muted)" }}>
+              INFI MultiChain Ecosystem
+            </span>
+          </span>
+        </div>
+      </div>
+
       <div className="max-w-6xl mx-auto px-6">
         {/* Top row: brand + status */}
         <div className="py-4 flex items-center justify-between">
