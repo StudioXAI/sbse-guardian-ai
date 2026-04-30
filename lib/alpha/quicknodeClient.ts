@@ -53,8 +53,11 @@ export interface ChainConfig {
   chainId: number;
   /** Per-chain QuickNode env var (legacy override). */
   quicknodeEnvVar: string;
-  /** QuickNode multi-chain path suffix. Empty = default chain. */
-  quicknodeSuffix: string;
+  /** QuickNode chain subdomain. Empty string = Ethereum (bare URL).
+      For other chains, this gets injected before the base hostname:
+      `https://NAME.quiknode.pro/SECRET/` →
+      `https://NAME.SUBDOMAIN.quiknode.pro/SECRET/` */
+  quicknodeSubdomain: string;
   /** Per-chain Ankr env var (legacy override). */
   ankrEnvVar: string;
   /** Ankr multi-chain path suffix (Ankr uses chain-prefixed paths). */
@@ -69,7 +72,7 @@ export const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
     name: "Ethereum",
     chainId: 1,
     quicknodeEnvVar: "QUICKNODE_ETH_URL",
-    quicknodeSuffix: "",
+    quicknodeSubdomain: "",
     ankrEnvVar: "ANKR_ETH_URL",
     ankrSuffix: "eth",
     publicUrl: "https://cloudflare-eth.com",
@@ -79,7 +82,7 @@ export const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
     name: "BSC",
     chainId: 56,
     quicknodeEnvVar: "QUICKNODE_BSC_URL",
-    quicknodeSuffix: "bsc",
+    quicknodeSubdomain: "bsc",
     ankrEnvVar: "ANKR_BSC_URL",
     ankrSuffix: "bsc",
     publicUrl: "https://bsc-dataseed.binance.org",
@@ -89,7 +92,7 @@ export const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
     name: "Polygon",
     chainId: 137,
     quicknodeEnvVar: "QUICKNODE_POLYGON_URL",
-    quicknodeSuffix: "polygon",
+    quicknodeSubdomain: "matic",
     ankrEnvVar: "ANKR_POLYGON_URL",
     ankrSuffix: "polygon",
     publicUrl: "https://polygon-rpc.com",
@@ -99,7 +102,7 @@ export const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
     name: "Arbitrum",
     chainId: 42161,
     quicknodeEnvVar: "QUICKNODE_ARBITRUM_URL",
-    quicknodeSuffix: "arbitrum-mainnet",
+    quicknodeSubdomain: "arbitrum-mainnet",
     ankrEnvVar: "ANKR_ARBITRUM_URL",
     ankrSuffix: "arbitrum",
     publicUrl: "https://arb1.arbitrum.io/rpc",
@@ -109,7 +112,7 @@ export const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
     name: "Optimism",
     chainId: 10,
     quicknodeEnvVar: "QUICKNODE_OPTIMISM_URL",
-    quicknodeSuffix: "optimism",
+    quicknodeSubdomain: "optimism",
     ankrEnvVar: "ANKR_OPTIMISM_URL",
     ankrSuffix: "optimism",
     publicUrl: "https://mainnet.optimism.io",
@@ -119,11 +122,7 @@ export const CHAIN_CONFIG: Record<SupportedChain, ChainConfig> = {
     name: "Base",
     chainId: 8453,
     quicknodeEnvVar: "QUICKNODE_BASE_URL_CHAIN",
-    /* Note: QuickNode env var is intentionally NOT just QUICKNODE_BASE_URL
-       to avoid colliding with the multi-chain base URL var of the same
-       name. If users set QUICKNODE_BASE_URL_CHAIN they get a per-chain
-       override for Base specifically. */
-    quicknodeSuffix: "base-mainnet",
+    quicknodeSubdomain: "base-mainnet",
     ankrEnvVar: "ANKR_BASE_URL",
     ankrSuffix: "base",
     publicUrl: "https://mainnet.base.org",
@@ -143,10 +142,51 @@ interface ProviderUrl {
 }
 
 /**
- * Build a multi-chain URL by appending a path suffix to a base.
- * Handles trailing-slash variations gracefully.
+ * Build a QuickNode multi-chain URL by injecting a subdomain
+ * before the base hostname.
+ *
+ * QuickNode multichain pattern (per their docs):
+ *   Ethereum (default): https://NAME.quiknode.pro/SECRET/
+ *   Other chains:       https://NAME.SUBDOMAIN.quiknode.pro/SECRET/
+ *
+ * The chain identifier is in the subdomain — NOT in the path.
+ * This is a critical detail: an earlier implementation appended
+ * the chain as a path suffix, which silently produced URLs that
+ * 404'd at the load balancer and returned empty results to the
+ * scanner instead of an error.
  */
-function buildMultiChainUrl(base: string, suffix: string): string {
+function buildQuickNodeUrl(base: string, subdomain: string): string {
+  /* Empty subdomain means Ethereum / default chain — use the base URL as-is. */
+  if (!subdomain) return base;
+
+  try {
+    const parsed = new URL(base);
+    const hostParts = parsed.hostname.split(".");
+    /* Insert the subdomain after the FIRST host segment.
+       Example: "prettiest-dawn-lambo.quiknode.pro"
+                → ["prettiest-dawn-lambo", "quiknode", "pro"]
+       After insertion with subdomain "bsc":
+                → ["prettiest-dawn-lambo", "bsc", "quiknode", "pro"]
+                → "prettiest-dawn-lambo.bsc.quiknode.pro" */
+    if (hostParts.length < 2) {
+      /* Malformed host — fall back to bare base URL. Better than crashing. */
+      return base;
+    }
+    const newHost = [hostParts[0], subdomain, ...hostParts.slice(1)].join(".");
+    parsed.hostname = newHost;
+    return parsed.toString();
+  } catch {
+    /* If URL parsing fails (it shouldn't), return bare base — the scanner
+       will at least talk to ETH instead of erroring entirely. */
+    return base;
+  }
+}
+
+/**
+ * Build an Ankr multi-chain URL by appending a path suffix to a base.
+ * Ankr uses path-based routing: rpc.ankr.com/eth, rpc.ankr.com/bsc, etc.
+ */
+function buildAnkrUrl(base: string, suffix: string): string {
   const trimmed = base.endsWith("/") ? base : base + "/";
   if (!suffix) return trimmed;
   return trimmed + suffix + "/";
@@ -170,12 +210,12 @@ function getProviderChain(chain: SupportedChain): ProviderUrl[] {
     if (qnBase && qnBase.length > 0) {
       out.push({
         provider: "QuickNode",
-        url: buildMultiChainUrl(qnBase, cfg.quicknodeSuffix),
+        url: buildQuickNodeUrl(qnBase, cfg.quicknodeSubdomain),
       });
     }
   }
 
-  /* Ankr secondary — same resolution pattern. */
+  /* Ankr secondary — uses path-suffix routing, different from QuickNode. */
   const ankrExplicit = process.env[cfg.ankrEnvVar];
   if (ankrExplicit && ankrExplicit.length > 0) {
     out.push({ provider: "Ankr", url: ankrExplicit });
@@ -184,7 +224,7 @@ function getProviderChain(chain: SupportedChain): ProviderUrl[] {
     if (ankrBase && ankrBase.length > 0) {
       out.push({
         provider: "Ankr",
-        url: buildMultiChainUrl(ankrBase, cfg.ankrSuffix),
+        url: buildAnkrUrl(ankrBase, cfg.ankrSuffix),
       });
     } else {
       /* No Ankr key configured — use Ankr public endpoint. They tolerate
@@ -507,8 +547,11 @@ export interface ProviderRoute {
 function redactUrl(url: string): string {
   try {
     const parsed = new URL(url);
-    /* Strip path entirely except for the host — many RPC URLs embed
-       the API key in the path (e.g. quiknode.pro/SECRET/). */
+    /* Show full hostname (includes chain subdomain like "bsc" or
+       "matic") so the diagnostic panel can prove chain routing is
+       correct. Strip only the path which contains the secret API
+       key. Pathname is replaced with a placeholder to keep the
+       formatting compact. */
     return `${parsed.protocol}//${parsed.host}/…`;
   } catch {
     return url.slice(0, 30) + "…";
