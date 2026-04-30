@@ -1,19 +1,62 @@
 "use client";
 
-import type { ThreatsPayload, SuspiciousSell } from "@/lib/alpha/threatTracker";
-import type { RiskReason } from "@/lib/alpha/dexEventScanner";
+import { useState } from "react";
+import type { ThreatsPayload } from "@/lib/alpha/threatTracker";
+import type { SuspiciousActivity, RiskReason } from "@/lib/alpha/threatTypes";
 import { formatUsd, timeAgo } from "@/lib/alpha/format";
 
 interface Props {
   data: ThreatsPayload | null;
 }
 
+interface GroupConfig {
+  key: keyof ThreatsPayload["groups"];
+  title: string;
+  description: string;
+  emptyMessage: string;
+  accentColor: string;
+}
+
+const GROUPS: GroupConfig[] = [
+  {
+    key: "dexSwaps",
+    title: "DEX Swaps",
+    description: "Uniswap V2/V3 + Curve + Balancer · suspicious sells",
+    emptyMessage:
+      "No suspicious DEX swaps in the last scan window.",
+    accentColor: "var(--danger)",
+  },
+  {
+    key: "liquidityRemovals",
+    title: "Liquidity Removals",
+    description: "V2/V3 LP withdrawals · the archetypal rug-pull signal",
+    emptyMessage:
+      "No notable liquidity withdrawals in the last scan window.",
+    accentColor: "var(--warning, #f59e0b)",
+  },
+  {
+    key: "lendingActivity",
+    title: "Lending Activity",
+    description: "Aave V3 borrows + liquidations across enabled chains",
+    emptyMessage: "No notable lending events in the last scan window.",
+    accentColor: "#a855f7",
+  },
+  {
+    key: "largeTransfers",
+    title: "Large Transfers",
+    description: "ERC20 Transfer events ≥ $50K · CEX flows + treasury moves",
+    emptyMessage: "No large transfers above the threshold this scan.",
+    accentColor: "var(--accent-soft)",
+  },
+];
+
 export default function SuspiciousSellsPanel({ data }: Props) {
   if (data === null) {
     return (
       <div className="card p-5">
         <div className="text-sm" style={{ color: "var(--fg-dim)" }}>
-          Scanning live blockchain activity for suspicious sells…
+          Scanning live blockchain activity across DEX swaps, lending, LP
+          removals, and large transfers…
         </div>
       </div>
     );
@@ -54,60 +97,30 @@ export default function SuspiciousSellsPanel({ data }: Props) {
           <code style={{ color: "var(--accent-soft)" }}>
             QUICKNODE_BASE_URL
           </code>{" "}
-          to your Vercel environment variables. All 6 chains
-          (Ethereum/BSC/Polygon/Arbitrum/Optimism/Base) auto-enable from
-          the single base URL. For legacy single-chain endpoints, set per-chain
-          vars instead (
-          <code style={{ color: "var(--accent-soft)" }}>QUICKNODE_ETH_URL</code>,{" "}
-          <code style={{ color: "var(--accent-soft)" }}>QUICKNODE_BSC_URL</code>,{" "}
-          etc.) — these override the base URL when present.
+          to your Vercel environment variables.
         </p>
       </div>
     );
   }
 
-  if (data.suspiciousSells.length === 0) {
-    return (
-      <div className="card p-5">
-        <div
-          className="font-mono text-[11px] mb-2"
-          style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
-        >
-          NO SUSPICIOUS SELLS IN THE LAST SCAN WINDOW
-        </div>
-        <p
-          className="text-[13px] mb-3"
-          style={{ color: "var(--fg-muted)" }}
-        >
-          The whole-chain scanner found no swaps meeting suspicion
-          thresholds (≥1% pool impact, large size, or wallet flags) in the
-          last ~30 blocks across {data.chainsScanned.length}{" "}
-          {data.chainsScanned.length === 1 ? "chain" : "chains"}. Scanner
-          refreshes every 90 seconds.
-        </p>
-        <p
-          className="text-[10px] font-mono"
-          style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
-        >
-          {data.totalEventsSeen.toLocaleString()} swap events scanned ·{" "}
-          {data.blocksScanned} blocks
-        </p>
-      </div>
-    );
-  }
+  /* Aggregate stats across all groups for the header strip. */
+  const totalActivities =
+    data.groups.dexSwaps.length +
+    data.groups.liquidityRemovals.length +
+    data.groups.lendingActivity.length +
+    data.groups.largeTransfers.length;
 
   return (
-    <div className="card p-5">
-      <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-        <div className="label-sm" style={{ color: "var(--fg-muted)" }}>
-          Top {data.suspiciousSells.length} suspicious sells · live scan
-        </div>
-        <div className="flex items-center gap-2 flex-wrap">
+    <div className="space-y-3">
+      {/* Top stats strip */}
+      <div className="card p-3 flex items-center justify-between flex-wrap gap-2">
+        <div className="flex items-center gap-3 flex-wrap">
           <span
-            className="text-[10px] font-mono"
-            style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
+            className="label-xs"
+            style={{ color: "var(--fg-muted)" }}
           >
-            {data.totalEventsSeen.toLocaleString()} events scanned
+            Live multi-protocol scan · {data.chainsScanned.length}{" "}
+            {data.chainsScanned.length === 1 ? "chain" : "chains"}
           </span>
           <span
             className="text-[10px] px-2 py-1 rounded-full font-mono"
@@ -117,22 +130,141 @@ export default function SuspiciousSellsPanel({ data }: Props) {
               letterSpacing: "0.05em",
             }}
           >
-            {data.suspiciousSells.length} FLAGGED
+            {totalActivities} FLAGGED
+          </span>
+        </div>
+        <div
+          className="text-[10px] font-mono flex flex-wrap gap-x-3 gap-y-1"
+          style={{ color: "var(--fg-dim)" }}
+        >
+          <span>{data.scanStats.dexSwapsSeen.toLocaleString()} DEX events</span>
+          <span>·</span>
+          <span>
+            {data.scanStats.liquidityRemovalsSeen.toLocaleString()} burns
+          </span>
+          <span>·</span>
+          <span>
+            {data.scanStats.lendingEventsSeen.toLocaleString()} lending
+          </span>
+          <span>·</span>
+          <span>
+            {data.scanStats.transfersSeen.toLocaleString()} transfers
           </span>
         </div>
       </div>
 
-      <div className="space-y-2">
-        {data.suspiciousSells.map((sell) => (
-          <SellRow key={sell.id} sell={sell} />
-        ))}
-      </div>
+      {totalActivities === 0 && (
+        <div className="card p-5">
+          <div
+            className="font-mono text-[11px] mb-2"
+            style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
+          >
+            NOTHING SUSPICIOUS IN THE LAST SCAN WINDOW
+          </div>
+          <p
+            className="text-[13px]"
+            style={{ color: "var(--fg-muted)" }}
+          >
+            All scanners ran and found no activity meeting suspicion
+            thresholds. Refreshes every 90 seconds — if a chain is quiet,
+            empty results are expected and normal.
+          </p>
+        </div>
+      )}
+
+      {/* Render each group */}
+      {GROUPS.map((groupCfg) => (
+        <Group
+          key={groupCfg.key}
+          config={groupCfg}
+          activities={data.groups[groupCfg.key]}
+        />
+      ))}
     </div>
   );
 }
 
-function SellRow({ sell }: { sell: SuspiciousSell }) {
-  const sev = sell.severity;
+/* ─────────────────────────────────────────────────────────────
+   Group section — collapsible, with header + list of activities
+   ───────────────────────────────────────────────────────────── */
+
+function Group({
+  config,
+  activities,
+}: {
+  config: GroupConfig;
+  activities: SuspiciousActivity[];
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const hasItems = activities.length > 0;
+
+  return (
+    <div
+      className="card overflow-hidden"
+      style={{ borderLeft: `3px solid ${config.accentColor}` }}
+    >
+      {/* Header */}
+      <button
+        type="button"
+        onClick={() => setCollapsed(!collapsed)}
+        className="w-full p-4 flex items-center justify-between gap-2 flex-wrap text-left transition-colors hover:bg-[var(--bg-elevated)]"
+        style={{ background: "transparent", border: "none", cursor: "pointer" }}
+      >
+        <div>
+          <div
+            className="label-sm flex items-center gap-2 flex-wrap"
+            style={{ color: config.accentColor }}
+          >
+            <span>{config.title}</span>
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded font-mono"
+              style={{
+                background: "var(--bg-subtle)",
+                color: "var(--fg-muted)",
+              }}
+            >
+              {activities.length}
+            </span>
+          </div>
+          <div className="text-[11px] mt-0.5" style={{ color: "var(--fg-dim)" }}>
+            {config.description}
+          </div>
+        </div>
+        <span
+          className="font-mono text-[11px]"
+          style={{ color: "var(--fg-dim)" }}
+        >
+          {collapsed ? "+" : "−"}
+        </span>
+      </button>
+
+      {/* Body */}
+      {!collapsed && (
+        <div className="px-4 pb-4">
+          {!hasItems && (
+            <p className="text-[12px]" style={{ color: "var(--fg-dim)" }}>
+              {config.emptyMessage}
+            </p>
+          )}
+          {hasItems && (
+            <div className="space-y-2">
+              {activities.map((a) => (
+                <ActivityRow key={a.id} activity={a} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Single activity row — adapts display based on category
+   ───────────────────────────────────────────────────────────── */
+
+function ActivityRow({ activity }: { activity: SuspiciousActivity }) {
+  const sev = activity.severity;
   const sevColor =
     sev >= 80
       ? "var(--danger)"
@@ -141,7 +273,11 @@ function SellRow({ sell }: { sell: SuspiciousSell }) {
       : "var(--accent-soft)";
   const sevLabel = sev >= 80 ? "CRITICAL" : sev >= 50 ? "HIGH" : "MEDIUM";
 
-  const sellerDisplay = sell.sellerLabel ?? shorten(sell.sellerAddress);
+  const walletDisplay = activity.walletLabel ?? shorten(activity.wallet);
+  const counterpartyDisplay = activity.counterpartyLabel ?? (activity.counterparty ? shorten(activity.counterparty) : null);
+
+  /* Token display — for liquidity removals tokenSymbol is "X/Y", treat as-is. */
+  const tokenLabel = activity.tokenSymbol;
 
   return (
     <div
@@ -151,7 +287,7 @@ function SellRow({ sell }: { sell: SuspiciousSell }) {
         borderLeft: `3px solid ${sevColor}`,
       }}
     >
-      {/* Top row: severity + symbol + chain + USD + impact */}
+      {/* Top row: severity + token + USD/impact */}
       <div className="flex items-start justify-between gap-2 mb-2 flex-wrap">
         <div className="flex items-center gap-2 flex-wrap">
           <span
@@ -175,34 +311,38 @@ function SellRow({ sell }: { sell: SuspiciousSell }) {
               fontSize: "11px",
               letterSpacing: "0.05em",
             }}
-            title={sell.tokenName}
+            title={activity.tokenName}
           >
-            {sell.symbol}
+            {tokenLabel}
           </span>
           <span
             className="text-[10px] font-mono"
             style={{ color: "var(--fg-dim)" }}
           >
-            {sell.chain} · {sell.poolLabel}
+            {activity.chain} · {activity.contractLabel}
           </span>
         </div>
         <div className="text-right">
           <div
             className="font-mono font-medium"
-            style={{ fontSize: "14px", color: "var(--danger)" }}
+            style={{ fontSize: "14px", color: sevColor }}
           >
-            {sell.amountUsd !== null ? `−${formatUsd(sell.amountUsd)}` : "—"}
+            {activity.amountUsd !== null
+              ? formatUsd(activity.amountUsd)
+              : "—"}
           </div>
-          <div className="text-[10px]" style={{ color: "var(--danger)" }}>
-            {sell.poolImpactPct.toFixed(2)}% pool impact
-          </div>
+          {activity.poolImpactPct > 0 && (
+            <div className="text-[10px]" style={{ color: "var(--danger)" }}>
+              {activity.poolImpactPct.toFixed(2)}% pool impact
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Risk-reason badges */}
-      {sell.riskReasons.length > 0 && (
+      {/* Risk reason badges */}
+      {activity.riskReasons.length > 0 && (
         <div className="flex items-center gap-1 mb-2 flex-wrap">
-          {sell.riskReasons.map((r) => (
+          {activity.riskReasons.map((r) => (
             <RiskBadge key={r} reason={r} />
           ))}
         </div>
@@ -213,55 +353,72 @@ function SellRow({ sell }: { sell: SuspiciousSell }) {
         className="text-[12px] mb-2 leading-snug"
         style={{ color: "var(--fg-muted)" }}
       >
-        {sell.riskSummary}
+        {activity.riskSummary}
       </p>
 
       {/* Detail rows */}
       <div className="space-y-1 text-[11px]">
         <div className="flex items-center gap-2">
-          <span style={{ color: "var(--fg-dim)", minWidth: "60px" }}>
-            Seller:
+          <span style={{ color: "var(--fg-dim)", minWidth: "70px" }}>
+            Wallet:
           </span>
           <a
-            href={sell.sellerUrl}
+            href={activity.walletUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono hover:underline truncate"
             style={{ color: "var(--info)" }}
-            title={`${sell.sellerAddress} · view on block explorer`}
+            title={`${activity.wallet} · view on block explorer`}
           >
-            {sellerDisplay}
+            {walletDisplay}
           </a>
         </div>
+        {counterpartyDisplay && activity.counterparty && (
+          <div className="flex items-center gap-2">
+            <span style={{ color: "var(--fg-dim)", minWidth: "70px" }}>
+              {activity.category === "large_transfer" ? "Recipient:" : "Counterparty:"}
+            </span>
+            <a
+              href={`https://etherscan.io/address/${activity.counterparty}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-mono hover:underline truncate"
+              style={{ color: "var(--info)" }}
+              title={activity.counterparty}
+            >
+              {counterpartyDisplay}
+            </a>
+          </div>
+        )}
         <div className="flex items-center gap-2">
-          <span style={{ color: "var(--fg-dim)", minWidth: "60px" }}>
-            Pool:
+          <span style={{ color: "var(--fg-dim)", minWidth: "70px" }}>
+            Contract:
           </span>
           <a
-            href={sell.poolUrl}
+            href={activity.contractUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono hover:underline truncate"
             style={{ color: "var(--fg-muted)" }}
-            title={sell.poolAddress}
+            title={activity.contractAddress}
           >
-            {shorten(sell.poolAddress)}
+            {shorten(activity.contractAddress)}
           </a>
         </div>
         <div className="flex items-center gap-2">
-          <span style={{ color: "var(--fg-dim)", minWidth: "60px" }}>
+          <span style={{ color: "var(--fg-dim)", minWidth: "70px" }}>
             Amount:
           </span>
           <span className="font-mono" style={{ color: "var(--fg-muted)" }}>
-            {sell.tokenAmount.toLocaleString(undefined, {
+            {activity.tokenAmount.toLocaleString(undefined, {
               maximumFractionDigits: 2,
             })}{" "}
-            {sell.symbol}
+            {activity.tokenSymbol}
           </span>
         </div>
         <div className="flex items-center justify-between gap-2 pt-1">
           <a
-            href={sell.txUrl}
+            href={activity.txUrl}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono hover:underline"
@@ -273,7 +430,7 @@ function SellRow({ sell }: { sell: SuspiciousSell }) {
             className="font-mono"
             style={{ color: "var(--fg-dim)", fontSize: "10px" }}
           >
-            block {sell.blockNumber.toLocaleString()} · {timeAgo(sell.timestamp)}
+            block {activity.blockNumber.toLocaleString()} · {timeAgo(activity.timestamp)}
           </span>
         </div>
       </div>
@@ -287,6 +444,7 @@ function SellRow({ sell }: { sell: SuspiciousSell }) {
 
 function RiskBadge({ reason }: { reason: RiskReason }) {
   const meta = RISK_META[reason];
+  if (!meta) return null;
   return (
     <span
       className="font-mono px-1.5 py-0.5 rounded"
@@ -310,10 +468,10 @@ const RISK_META: Record<
   { label: string; bg: string; fg: string; desc: string }
 > = {
   large_sell: {
-    label: "LARGE SELL",
+    label: "LARGE",
     bg: "rgba(245,158,11,0.12)",
     fg: "var(--warning, #f59e0b)",
-    desc: "Sell amount over $50K USD",
+    desc: "Notable size — over $50K USD",
   },
   liquidity_drain: {
     label: "LIQUIDITY DRAIN",
@@ -356,6 +514,60 @@ const RISK_META: Record<
     bg: "rgba(108,99,255,0.15)",
     fg: "var(--accent-soft)",
     desc: "Token has no public price — likely freshly deployed",
+  },
+  lp_withdrawal: {
+    label: "LP WITHDRAWAL",
+    bg: "rgba(245,158,11,0.12)",
+    fg: "var(--warning, #f59e0b)",
+    desc: "Liquidity provider exited the pool",
+  },
+  lp_burn_full: {
+    label: "FULL LP BURN",
+    bg: "rgba(239,68,68,0.18)",
+    fg: "var(--danger)",
+    desc: "Most or all of the LP position was burned",
+  },
+  treasury_outflow: {
+    label: "TREASURY OUTFLOW",
+    bg: "rgba(239,68,68,0.18)",
+    fg: "var(--danger)",
+    desc: "Funds left a known team or treasury wallet",
+  },
+  exchange_deposit: {
+    label: "CEX DEPOSIT",
+    bg: "rgba(168,85,247,0.15)",
+    fg: "#a855f7",
+    desc: "Tokens deposited to a centralized exchange — often pre-sell",
+  },
+  exchange_withdrawal: {
+    label: "CEX WITHDRAWAL",
+    bg: "rgba(108,99,255,0.15)",
+    fg: "var(--accent-soft)",
+    desc: "Tokens withdrawn from a centralized exchange",
+  },
+  labeled_wallet_activity: {
+    label: "LABELED WALLET",
+    bg: "rgba(108,99,255,0.12)",
+    fg: "var(--accent-soft)",
+    desc: "One side is a known/labeled wallet",
+  },
+  lending_borrow: {
+    label: "BORROW",
+    bg: "rgba(168,85,247,0.15)",
+    fg: "#a855f7",
+    desc: "Tokens borrowed from a lending protocol",
+  },
+  liquidation: {
+    label: "LIQUIDATION",
+    bg: "rgba(239,68,68,0.18)",
+    fg: "var(--danger)",
+    desc: "Position liquidated — borrower's collateral was seized",
+  },
+  stable_swap: {
+    label: "STABLE SWAP",
+    bg: "rgba(108,99,255,0.12)",
+    fg: "var(--accent-soft)",
+    desc: "Stablecoin-pair exchange (Curve-style)",
   },
 };
 

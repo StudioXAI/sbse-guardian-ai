@@ -48,16 +48,17 @@ export default function ThreatsSection() {
           Threat scanner · Live on-chain DEX scan
         </div>
         <p className="text-[12px] leading-relaxed" style={{ color: "var(--fg-muted)" }}>
-          Scans every Uniswap V2 + V3 Swap event in the last ~30 blocks
-          across enabled chains. No hardcoded token list — every token
-          that traded is automatically considered. Surfaces the top
-          suspicious sells based on pool impact, sell size, and wallet
-          flags. Also tracks dangerous function calls (mint,
-          transferOwnership, removeLiquidity etc.) on tracked contracts
-          and traces fund flow up to 3 hops.{" "}
+          Live scan of every Uniswap V2/V3, Curve, Balancer V2 swap, every
+          LP burn, every Aave borrow + liquidation, and every $50K+ ERC20
+          transfer in the last ~30 blocks across enabled chains. No
+          hardcoded token list — every token that traded is automatically
+          considered. Surfaces top-8 per category, ranked by severity.
+          Also tracks dangerous function calls (mint, transferOwnership,
+          removeLiquidity etc.) on tracked contracts and traces fund flow
+          up to 3 hops.{" "}
           <span style={{ color: "var(--fg-dim)" }}>
             Detection is post-confirmation only — typically 60–180s after
-            a swap is mined. Mempool monitoring (pending transactions)
+            an event is mined. Mempool monitoring (pending transactions)
             requires additional paid infrastructure.
           </span>
         </p>
@@ -67,8 +68,13 @@ export default function ThreatsSection() {
       {data && !data.unconfigured && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard
-            label="Suspicious sells (6h)"
-            value={data.suspiciousSells.length.toString()}
+            label="Total flagged"
+            value={(
+              data.groups.dexSwaps.length +
+              data.groups.liquidityRemovals.length +
+              data.groups.lendingActivity.length +
+              data.groups.largeTransfers.length
+            ).toString()}
             colorVar="var(--danger)"
           />
           <StatCard
@@ -88,17 +94,6 @@ export default function ThreatsSection() {
         </div>
       )}
 
-      {/* Total events seen indicator — useful diagnostic when sells are zero */}
-      {data && !data.unconfigured && data.totalEventsSeen > 0 && (
-        <div
-          className="text-[10px] font-mono"
-          style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
-        >
-          {data.totalEventsSeen.toLocaleString()} swap events scanned across{" "}
-          {data.blocksScanned} blocks
-        </div>
-      )}
-
       {data?.unconfigured && (
         <div
           className="card p-4"
@@ -109,7 +104,7 @@ export default function ThreatsSection() {
           </div>
           <p className="text-[12px] leading-relaxed" style={{ color: "var(--fg-muted)" }}>
             The threat scanner needs at minimum a QuickNode RPC endpoint
-            (<code style={{ color: "var(--accent-soft)" }}>QUICKNODE_ETH_URL</code>)
+            (<code style={{ color: "var(--accent-soft)" }}>QUICKNODE_BASE_URL</code>)
             for live blockchain scanning, or an{" "}
             <code style={{ color: "var(--accent-soft)" }}>ETHERSCAN_API_KEY</code>{" "}
             for risk-event detection. Add at least one to your Vercel
@@ -122,9 +117,16 @@ export default function ThreatsSection() {
       <div className="flex flex-wrap gap-2">
         <SubTab
           active={tab === "sells"}
-          label="Suspicious sells"
-          sub={`≥1% pool impact${
-            data ? ` · ${data.suspiciousSells.length} flagged` : ""
+          label="Suspicious activity"
+          sub={`Multi-protocol${
+            data
+              ? ` · ${
+                  data.groups.dexSwaps.length +
+                  data.groups.liquidityRemovals.length +
+                  data.groups.lendingActivity.length +
+                  data.groups.largeTransfers.length
+                } flagged`
+              : ""
           }`}
           onClick={() => setTab("sells")}
         />

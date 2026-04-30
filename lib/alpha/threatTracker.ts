@@ -1,35 +1,45 @@
 /* ─────────────────────────────────────────────────────────────
    Threat Tracker — orchestrator
 
-   Combines two detection layers:
+   Runs all detection scanners in parallel and assembles a single
+   grouped payload for the UI:
 
-   1. Suspicious sells: discovered via whole-chain DEX event scan
-      (dexEventScanner.ts → QuickNode RPC). No hardcoded token list.
+   - dexSwaps          — Uniswap V2/V3 + Curve + Balancer V2
+   - liquidityRemovals — V2/V3 Burn events
+   - lendingActivity   — Aave V3 borrows + liquidations
+   - largeTransfers    — ERC20 Transfer events ≥ $50K
+   - riskEvents        — dangerous function calls (Etherscan-driven)
 
-   2. Risk events: dangerous function calls (mint, transferOwnership,
-      removeLiquidity etc.) on contracts we know about — kept for
-      now as a complement to live sell detection. This portion still
-      uses Etherscan + a small token list since whole-chain
-      function-call decoding is expensive and largely covered by
-      DEX event surveillance for sell-side risk.
+   All scanners share types via threatTypes.ts and produce
+   SuspiciousActivity records with a `category` field. The panel
+   uses that to render grouped sections.
 
-   The combined payload feeds the existing /api/alpha/threats route
-   and the existing UI panels in components/alpha/.
+   Block-tip lookups are deduped — we fetch each chain's current
+   block number once and pass it to all scanners. This saves
+   ~5 RPC calls per refresh (one per scanner per chain).
    ───────────────────────────────────────────────────────────── */
 
 import { TtlCache } from "./cache";
 import {
-  scanForSuspiciousActivity,
-  type SuspiciousActivity,
-  type RiskReason,
+  getEnabledChains,
+  getBlockNumber,
+  type SupportedChain,
+} from "./quicknodeClient";
+import {
+  scanForSuspiciousActivity as scanUniswap,
+  type ScanResult as UniswapScanResult,
 } from "./dexEventScanner";
-import { getEnabledChains } from "./quicknodeClient";
+import { scanLargeTransfers } from "./transferScanner";
+import { scanLiquidityRemovals } from "./liquidityRemovalScanner";
+import { scanLendingActivity } from "./lendingScanner";
+import { scanExtendedDex } from "./dexExtendedScanner";
 import {
   decodeRiskFunction,
   severityWeight,
   type RiskSeverity,
 } from "./riskFunctions";
 import { getWalletLabel } from "./walletLabels";
+import type { SuspiciousActivity } from "./threatTypes";
 
 const CACHE_TTL_MS = 90_000;
 const REQUEST_TIMEOUT_MS = 12_000;
@@ -38,43 +48,6 @@ const ETHERSCAN_V2 = "https://api.etherscan.io/v2/api";
 /* ═══════════════════════════════════════════════════════════ */
 /* Public types                                                 */
 /* ═══════════════════════════════════════════════════════════ */
-
-/* SuspiciousSell now mirrors the SuspiciousActivity shape from the
-   scanner with one renaming for the UI panel's existing prop name. */
-export interface SuspiciousSell {
-  id: string;
-  txHash: string;
-  blockNumber: number;
-  timestamp: number;
-  chain: string;
-  chainId: number;
-  /** Token that was sold. */
-  symbol: string;
-  tokenAddress: string;
-  tokenName: string;
-  /** Wallet that initiated the sell. */
-  sellerAddress: string;
-  sellerLabel?: string;
-  /** Pool the sell hit. */
-  poolAddress: string;
-  poolLabel: string; // e.g. "Uniswap V3" or labeled pool
-  /** Token amount sold in human units. */
-  tokenAmount: number;
-  /** USD value (null = unpriced micro-cap). */
-  amountUsd: number | null;
-  /** % of pool drained. */
-  poolImpactPct: number;
-  /** Severity score 0-100. */
-  severity: number;
-  /** Multi-class risk reasons, e.g. ["liquidity_drain","mev_bot"]. */
-  riskReasons: RiskReason[];
-  /** Plain-English summary. */
-  riskSummary: string;
-  /** Block explorer URLs. */
-  txUrl: string;
-  sellerUrl: string;
-  poolUrl: string;
-}
 
 export interface RiskEvent {
   id: string;
@@ -96,16 +69,30 @@ export interface RiskEvent {
   timestamp: number;
 }
 
+export interface ThreatGroups {
+  /** Uniswap V2/V3, Curve, Balancer — all DEX swap activity */
+  dexSwaps: SuspiciousActivity[];
+  /** V2/V3 Burn events — liquidity withdrawn from pools */
+  liquidityRemovals: SuspiciousActivity[];
+  /** Aave V3 borrows + liquidations */
+  lendingActivity: SuspiciousActivity[];
+  /** $50K+ ERC20 Transfer events */
+  largeTransfers: SuspiciousActivity[];
+}
+
 export interface ThreatsPayload {
-  suspiciousSells: SuspiciousSell[];
+  groups: ThreatGroups;
   riskEvents: RiskEvent[];
   generatedAt: number;
   chainsScanned: string[];
-  blocksScanned: number;
-  totalEventsSeen: number;
-  /** True when no QuickNode RPC URL configured AND no Etherscan key. */
+  /** Total event counts per group — useful for the "scanned X events" line */
+  scanStats: {
+    dexSwapsSeen: number;
+    liquidityRemovalsSeen: number;
+    lendingEventsSeen: number;
+    transfersSeen: number;
+  };
   unconfigured: boolean;
-  /** Configuration hints to surface in the UI. */
   scannerStatus: {
     quicknodeConfigured: boolean;
     etherscanConfigured: boolean;
@@ -115,38 +102,9 @@ export interface ThreatsPayload {
 const cache = new TtlCache<ThreatsPayload>(CACHE_TTL_MS);
 
 /* ═══════════════════════════════════════════════════════════ */
-/* Conversion: SuspiciousActivity → SuspiciousSell              */
-/* ═══════════════════════════════════════════════════════════ */
-
-function activityToSell(act: SuspiciousActivity): SuspiciousSell {
-  return {
-    id: act.id,
-    txHash: act.txHash,
-    blockNumber: act.blockNumber,
-    timestamp: act.timestamp,
-    chain: act.chain,
-    chainId: act.chainId,
-    symbol: act.tokenSymbol,
-    tokenAddress: act.tokenAddress,
-    tokenName: act.tokenName,
-    sellerAddress: act.wallet,
-    sellerLabel: act.walletLabel,
-    poolAddress: act.poolAddress,
-    poolLabel: act.poolDex,
-    tokenAmount: act.tokenAmount,
-    amountUsd: act.amountUsd,
-    poolImpactPct: act.poolImpactPct,
-    severity: act.severity,
-    riskReasons: act.riskReasons,
-    riskSummary: act.riskSummary,
-    txUrl: act.txUrl,
-    sellerUrl: act.walletUrl,
-    poolUrl: act.poolUrl,
-  };
-}
-
-/* ═══════════════════════════════════════════════════════════ */
-/* Risk events (Etherscan-driven, lighter scope)                */
+/* Risk events (Etherscan-driven)                               */
+/* Identical to the previous threatTracker — function-call decoding
+   on a small list of well-known token contracts.                  */
 /* ═══════════════════════════════════════════════════════════ */
 
 interface EtherscanTx {
@@ -162,11 +120,6 @@ interface EtherscanResp {
   result?: EtherscanTx[] | string;
 }
 
-/* Tracked contracts for risk-event scanning. We keep this list
-   small because each entry = 1 Etherscan call per refresh. The
-   sell-side coverage is now whole-chain via QuickNode, so we
-   only need risk events for "is the token contract owner doing
-   something scary" — a different signal than DEX activity. */
 const RISK_EVENT_TARGETS: Array<{
   symbol: string;
   contract: string;
@@ -174,7 +127,6 @@ const RISK_EVENT_TARGETS: Array<{
   chain: string;
   explorerBase: string;
 }> = [
-  /* High-volume ERC-20s where sketchy admin actions matter. */
   { symbol: "USDT", contract: "0xdac17f958d2ee523a2206206994597c13d831ec7", chainId: 1, chain: "Ethereum", explorerBase: "https://etherscan.io" },
   { symbol: "USDC", contract: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", chainId: 1, chain: "Ethereum", explorerBase: "https://etherscan.io" },
   { symbol: "PEPE", contract: "0x6982508145454ce325ddbe47a25d4ec3d2311933", chainId: 1, chain: "Ethereum", explorerBase: "https://etherscan.io" },
@@ -264,40 +216,151 @@ async function scanRiskEvents(): Promise<RiskEvent[]> {
 }
 
 /* ═══════════════════════════════════════════════════════════ */
-/* Main entry point                                             */
+/* Main entry — orchestrate all scanners                        */
 /* ═══════════════════════════════════════════════════════════ */
+
+/**
+ * Look up the current block number for each enabled chain in
+ * parallel. Done once and shared across all scanners — saves
+ * (n_scanners - 1) × n_chains RPC calls per refresh.
+ */
+async function fetchTipBlocks(
+  chains: SupportedChain[],
+): Promise<Map<SupportedChain, number>> {
+  const tips = new Map<SupportedChain, number>();
+  const results = await Promise.all(
+    chains.map(async (chain) => {
+      const block = await getBlockNumber(chain);
+      return { chain, block };
+    }),
+  );
+  for (const { chain, block } of results) {
+    if (block !== null) tips.set(chain, block);
+  }
+  return tips;
+}
 
 export async function fetchThreats(): Promise<ThreatsPayload> {
   const cached = cache.get("payload");
   if (cached) return cached;
 
-  const quicknodeConfigured = getEnabledChains().length > 0;
+  const enabledChains = getEnabledChains();
+  const quicknodeConfigured = enabledChains.length > 0;
   const etherscanConfigured = !!process.env.ETHERSCAN_API_KEY;
 
-  /* Run both pipelines in parallel. */
-  const [scanResult, riskEvents] = await Promise.all([
+  /* Empty defaults so the UI never crashes on missing fields. */
+  const emptyGroups: ThreatGroups = {
+    dexSwaps: [],
+    liquidityRemovals: [],
+    lendingActivity: [],
+    largeTransfers: [],
+  };
+  const emptyStats = {
+    dexSwapsSeen: 0,
+    liquidityRemovalsSeen: 0,
+    lendingEventsSeen: 0,
+    transfersSeen: 0,
+  };
+
+  /* No QuickNode AND no Etherscan = nothing to do. */
+  if (!quicknodeConfigured && !etherscanConfigured) {
+    return {
+      groups: emptyGroups,
+      riskEvents: [],
+      generatedAt: Date.now(),
+      chainsScanned: [],
+      scanStats: emptyStats,
+      unconfigured: true,
+      scannerStatus: { quicknodeConfigured, etherscanConfigured },
+    };
+  }
+
+  /* Pre-fetch block tips for all chains once. */
+  const tipBlocks = quicknodeConfigured
+    ? await fetchTipBlocks(enabledChains)
+    : new Map<SupportedChain, number>();
+
+  /* Run all five scanners in parallel. Each is independently
+     defensive — failures are caught locally and return empty
+     results rather than crashing the whole pipeline. */
+  const [
+    uniswapResult,
+    extendedDexResult,
+    removalResult,
+    lendingResult,
+    transferResult,
+    riskEvents,
+  ] = await Promise.all([
     quicknodeConfigured
-      ? scanForSuspiciousActivity()
+      ? scanUniswap().catch(() => null as UniswapScanResult | null)
       : Promise.resolve(null),
+    quicknodeConfigured
+      ? scanExtendedDex(enabledChains, tipBlocks).catch(() => ({
+          activities: [],
+          totalEventsSeen: 0,
+        }))
+      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
+    quicknodeConfigured
+      ? scanLiquidityRemovals(enabledChains, tipBlocks).catch(() => ({
+          activities: [],
+          totalEventsSeen: 0,
+        }))
+      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
+    quicknodeConfigured
+      ? scanLendingActivity(enabledChains, tipBlocks).catch(() => ({
+          activities: [],
+          totalEventsSeen: 0,
+        }))
+      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
+    quicknodeConfigured
+      ? scanLargeTransfers(enabledChains, tipBlocks).catch(() => ({
+          activities: [],
+          totalEventsSeen: 0,
+        }))
+      : Promise.resolve({ activities: [], totalEventsSeen: 0 }),
     etherscanConfigured ? scanRiskEvents() : Promise.resolve([] as RiskEvent[]),
   ]);
 
-  const suspiciousSells: SuspiciousSell[] = scanResult
-    ? scanResult.activities.map(activityToSell)
-    : [];
+  /* Combine Uniswap + extended DEX (Curve/Balancer) into one DEX swaps
+     bucket. Sort by severity, take top 8. */
+  const dexSwapsCombined: SuspiciousActivity[] = [];
+  if (uniswapResult) dexSwapsCombined.push(...uniswapResult.activities);
+  dexSwapsCombined.push(...extendedDexResult.activities);
+  dexSwapsCombined.sort((a, b) => b.severity - a.severity);
+
+  const groups: ThreatGroups = {
+    dexSwaps: dexSwapsCombined.slice(0, 8),
+    liquidityRemovals: removalResult.activities,
+    lendingActivity: lendingResult.activities,
+    largeTransfers: transferResult.activities,
+  };
+
+  const dexEventsSeen =
+    (uniswapResult?.totalEventsSeen ?? 0) + extendedDexResult.totalEventsSeen;
 
   const payload: ThreatsPayload = {
-    suspiciousSells,
+    groups,
     riskEvents,
     generatedAt: Date.now(),
-    chainsScanned: scanResult?.chainsScanned ?? [],
-    blocksScanned: scanResult?.blocksScanned ?? 0,
-    totalEventsSeen: scanResult?.totalEventsSeen ?? 0,
-    unconfigured: !quicknodeConfigured && !etherscanConfigured,
+    chainsScanned: enabledChains,
+    scanStats: {
+      dexSwapsSeen: dexEventsSeen,
+      liquidityRemovalsSeen: removalResult.totalEventsSeen,
+      lendingEventsSeen: lendingResult.totalEventsSeen,
+      transfersSeen: transferResult.totalEventsSeen,
+    },
+    unconfigured: false,
     scannerStatus: { quicknodeConfigured, etherscanConfigured },
   };
 
-  if (suspiciousSells.length > 0 || riskEvents.length > 0) {
+  /* Only cache if we got data — otherwise let the next request
+     try again (might be a transient RPC outage). */
+  const totalActivities =
+    groups.dexSwaps.length +
+    groups.liquidityRemovals.length +
+    groups.lendingActivity.length +
+    groups.largeTransfers.length;
+  if (totalActivities > 0 || riskEvents.length > 0) {
     cache.set("payload", payload);
   }
   return payload;

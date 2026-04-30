@@ -35,61 +35,11 @@ import { getWalletLabel, isMevWallet } from "./walletLabels";
 /* Types                                                        */
 /* ═══════════════════════════════════════════════════════════ */
 
-export type RiskReason =
-  | "large_sell"
-  | "liquidity_drain"
-  | "abnormal_swap"
-  | "high_slippage"
-  | "flash_loan_pattern"
-  | "suspicious_wallet"
-  | "mev_bot"
-  | "new_token";
-
-export interface SuspiciousActivity {
-  id: string;
-  txHash: string;
-  blockNumber: number;
-  /** When the swap was mined (epoch ms). */
-  timestamp: number;
-  /** Chain where this happened. */
-  chain: string;
-  chainId: number;
-  /** The token that was sold (entered the pool). */
-  tokenSymbol: string;
-  tokenAddress: string;
-  tokenName: string;
-  /** Pool that absorbed the sell. */
-  poolAddress: string;
-  poolDex: "Uniswap V2" | "Uniswap V3" | "Other DEX";
-  /** Wallet that initiated the swap (tx sender). */
-  wallet: string;
-  walletLabel?: string;
-  /** Token amount sold in human units. */
-  tokenAmount: number;
-  /** USD value of the sell (best-effort — null if no price source). */
-  amountUsd: number | null;
-  /** Pool liquidity impact percent (% of pool reserves consumed). */
-  poolImpactPct: number;
-  /** Severity score 0-100. Higher = more suspicious. */
-  severity: number;
-  /** Multiple risk reasons can apply to the same swap. */
-  riskReasons: RiskReason[];
-  /** Plain-English summary, e.g. "Single wallet drained 14% of pool". */
-  riskSummary: string;
-  /** Where the sold tokens came from / where USDC went. Optional. */
-  fundFlow?: {
-    /** What happened to the sale proceeds (best inference). */
-    proceedsTo?: string;
-    proceedsToLabel?: string;
-    /** Where the sold token came from in the wallet. */
-    sourceFrom?: string;
-    sourceFromLabel?: string;
-  };
-  /** Block explorer URLs. */
-  txUrl: string;
-  walletUrl: string;
-  poolUrl: string;
-}
+/* Re-export shared types so existing imports of this module
+   continue to work — threatTracker imports RiskReason and
+   SuspiciousActivity from here today. */
+export type { RiskReason, SuspiciousActivity } from "./threatTypes";
+import type { SuspiciousActivity, RiskReason } from "./threatTypes";
 
 export interface ScanResult {
   activities: SuspiciousActivity[];
@@ -203,7 +153,7 @@ async function fetchSwapLogs(
  * Parse a fixed-size 32-byte hex word as an unsigned BigInt.
  * Input must NOT include the 0x prefix.
  */
-function parseUint256(hex: string): bigint {
+export function parseUint256(hex: string): bigint {
   if (!hex || hex.length === 0) return BigInt(0);
   try {
     return BigInt("0x" + hex);
@@ -233,7 +183,7 @@ function parseInt256(hex: string): bigint {
  * human units. Loses precision for huge values but our use case
  * is display + USD math which doesn't need wei-level accuracy.
  */
-function toHumanAmount(raw: bigint, decimals: number): number {
+export function toHumanAmount(raw: bigint, decimals: number): number {
   if (raw < BigInt(0)) raw = -raw;
   const divisor = BigInt(10) ** BigInt(decimals);
   const whole = Number(raw / divisor);
@@ -242,7 +192,7 @@ function toHumanAmount(raw: bigint, decimals: number): number {
 }
 
 /** Parse the indexed address topic (0x000...0040 bytes of address). */
-function parseAddressTopic(topic: string): string {
+export function parseAddressTopic(topic: string): string {
   if (!topic || topic.length < 42) return "";
   /* Last 20 bytes (40 hex chars) of the 32-byte topic. */
   return ("0x" + topic.slice(-40)).toLowerCase();
@@ -445,7 +395,7 @@ const CG_PLATFORM: Record<SupportedChain, string> = {
  * Tokens not in CoinGecko (small caps, brand new) return null in
  * the map — caller should display "—" or skip USD-based filters.
  */
-async function resolveTokenPrices(
+export async function resolveTokenPrices(
   chain: SupportedChain,
   addresses: string[],
 ): Promise<Map<string, number>> {
@@ -812,19 +762,17 @@ async function scanChain(chain: SupportedChain): Promise<{
 
     out.push({
       id: `${c.swap.txHash}-${c.swap.poolAddress}`,
+      category: "dex_swap",
       txHash: c.swap.txHash,
       blockNumber: c.swap.blockNumber,
-      /* We don't have block timestamp from logs alone — approximate
-         from the chain's average block time. ETH ~12s, BSC ~3s, etc.
-         Close enough for "X minutes ago" display. */
       timestamp: approxBlockTimestamp(chain, c.swap.blockNumber),
       chain: cfg.name,
       chainId: cfg.chainId,
       tokenSymbol: c.soldToken.symbol,
       tokenAddress: c.soldToken.address,
       tokenName: c.soldToken.name,
-      poolAddress: c.swap.poolAddress,
-      poolDex: c.swap.dex,
+      contractAddress: c.swap.poolAddress,
+      contractLabel: c.swap.dex,
       wallet: c.swap.sender,
       walletLabel: walletLabel?.label,
       tokenAmount: c.soldHumanAmount,
@@ -835,7 +783,7 @@ async function scanChain(chain: SupportedChain): Promise<{
       riskSummary: classification.summary,
       txUrl: `${cfg.explorerBase}/tx/${c.swap.txHash}`,
       walletUrl: `${cfg.explorerBase}/address/${c.swap.sender}`,
-      poolUrl: `${cfg.explorerBase}/address/${c.swap.poolAddress}`,
+      contractUrl: `${cfg.explorerBase}/address/${c.swap.poolAddress}`,
     });
   }
 
@@ -850,7 +798,7 @@ async function scanChain(chain: SupportedChain): Promise<{
  * the scan window is acceptable. The actual block number is also
  * surfaced in the row for users who need precise ordering.
  */
-function approxBlockTimestamp(
+export function approxBlockTimestamp(
   _chain: SupportedChain,
   _blockNumber: number,
 ): number {
