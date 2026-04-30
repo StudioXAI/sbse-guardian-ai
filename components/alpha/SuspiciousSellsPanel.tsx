@@ -110,6 +110,28 @@ export default function SuspiciousSellsPanel({ data }: Props) {
     data.groups.lendingActivity.length +
     data.groups.largeTransfers.length;
 
+  /* Recent buffer counts (across all categories). */
+  const recent = data.recent ?? {
+    groups: {
+      dexSwaps: [],
+      liquidityRemovals: [],
+      lendingActivity: [],
+      largeTransfers: [],
+    },
+    oldestEntryAt: null,
+    bufferSize: 0,
+  };
+  const recentTotal =
+    recent.groups.dexSwaps.length +
+    recent.groups.liquidityRemovals.length +
+    recent.groups.lendingActivity.length +
+    recent.groups.largeTransfers.length;
+
+  /* Mode toggle — Live (current scan) vs Recent (session buffer). */
+  const [mode, setMode] = useState<"live" | "recent">("live");
+  const displayedGroups = mode === "live" ? data.groups : recent.groups;
+  const displayedTotal = mode === "live" ? totalActivities : recentTotal;
+
   return (
     <div className="space-y-3">
       {/* Top stats strip */}
@@ -153,31 +175,95 @@ export default function SuspiciousSellsPanel({ data }: Props) {
         </div>
       </div>
 
-      {totalActivities === 0 && (
+      {/* Live / Recent (session) toggle — small mode switch above groups */}
+      <div className="card p-2 flex items-center gap-1 flex-wrap">
+        <button
+          type="button"
+          onClick={() => setMode("live")}
+          className="font-mono text-[11px] px-3 py-1.5 rounded transition-colors"
+          style={{
+            background:
+              mode === "live" ? "var(--bg-elevated)" : "transparent",
+            color: mode === "live" ? "var(--fg)" : "var(--fg-dim)",
+            border: "none",
+            cursor: "pointer",
+            letterSpacing: "0.05em",
+          }}
+        >
+          LIVE NOW
+          <span
+            className="ml-2 text-[9px] px-1.5 py-0.5 rounded"
+            style={{
+              background: "var(--bg-subtle)",
+              color: "var(--fg-muted)",
+            }}
+          >
+            {totalActivities}
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("recent")}
+          className="font-mono text-[11px] px-3 py-1.5 rounded transition-colors"
+          style={{
+            background:
+              mode === "recent" ? "var(--bg-elevated)" : "transparent",
+            color: mode === "recent" ? "var(--fg)" : "var(--fg-dim)",
+            border: "none",
+            cursor: "pointer",
+            letterSpacing: "0.05em",
+          }}
+        >
+          RECENT (SESSION)
+          <span
+            className="ml-2 text-[9px] px-1.5 py-0.5 rounded"
+            style={{
+              background: "var(--bg-subtle)",
+              color: "var(--fg-muted)",
+            }}
+          >
+            {recentTotal}
+          </span>
+        </button>
+        <div
+          className="ml-auto text-[10px] font-mono pl-2"
+          style={{ color: "var(--fg-dim)" }}
+        >
+          {mode === "live"
+            ? "Last scan window (~30 blocks)"
+            : recent.oldestEntryAt
+            ? `Buffered since ${timeAgo(recent.oldestEntryAt)} · resets on instance restart`
+            : "Buffer empty — populates as scans run"}
+        </div>
+      </div>
+
+      {displayedTotal === 0 && (
         <div className="card p-5">
           <div
             className="font-mono text-[11px] mb-2"
             style={{ color: "var(--fg-dim)", letterSpacing: "0.05em" }}
           >
-            NOTHING SUSPICIOUS IN THE LAST SCAN WINDOW
+            {mode === "live"
+              ? "NOTHING SUSPICIOUS IN THE LAST SCAN WINDOW"
+              : "NO BUFFERED WARNINGS YET"}
           </div>
           <p
             className="text-[13px]"
             style={{ color: "var(--fg-muted)" }}
           >
-            All scanners ran and found no activity meeting suspicion
-            thresholds. Refreshes every 90 seconds — if a chain is quiet,
-            empty results are expected and normal.
+            {mode === "live"
+              ? "All scanners ran and found no activity meeting suspicion thresholds. Refreshes every 90 seconds — if a chain is quiet, empty results are expected and normal."
+              : "The recent-warnings buffer accumulates flagged activity from each scan and persists for the lifetime of this serverless instance. As scans run, this view will fill up. Buffer resets on deploys or cold starts — it's not a real 24h history."}
           </p>
         </div>
       )}
 
-      {/* Render each group */}
+      {/* Render each group from the currently-selected dataset */}
       {GROUPS.map((groupCfg) => (
         <Group
           key={groupCfg.key}
           config={groupCfg}
-          activities={data.groups[groupCfg.key]}
+          activities={displayedGroups[groupCfg.key]}
         />
       ))}
 

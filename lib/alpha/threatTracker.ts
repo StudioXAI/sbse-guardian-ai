@@ -121,6 +121,19 @@ export interface ThreatsPayload {
   providerStats: ProviderStats[];
   /** Configured provider chain per supported chain — diagnostic. */
   providerRoutes: ProviderRoute[];
+  /** Recent warnings buffered in this serverless instance's memory.
+      NOT a real 24h history — only persists while this instance is
+      warm. The UI labels this honestly. */
+  recent: {
+    groups: ThreatGroups;
+    /** First-seen timestamp of the OLDEST entry in the buffer.
+        Tells the user how far back the buffered window actually
+        reaches, instead of claiming a fixed 24h that we can't keep.
+        null when buffer is empty. */
+    oldestEntryAt: number | null;
+    /** Total entries in the buffer (may exceed displayed counts). */
+    bufferSize: number;
+  };
   unconfigured: boolean;
   scannerStatus: {
     quicknodeConfigured: boolean;
@@ -129,6 +142,135 @@ export interface ThreatsPayload {
 }
 
 const cache = new TtlCache<ThreatsPayload>(CACHE_TTL_MS);
+
+/* ═══════════════════════════════════════════════════════════ */
+/* In-memory rolling buffer of recent warnings                  */
+/*                                                              */
+/* Keeps activities seen across recent scans alongside the      */
+/* "live now" results. NOT a real 24h history — Vercel          */
+/* serverless instances are ephemeral, so the buffer only       */
+/* persists for as long as this specific instance stays warm.   */
+/* The UI labels this honestly as "Recent warnings (session)"   */
+/* rather than claiming a 24-hour window we can't deliver.      */
+/*                                                              */
+/* Constraints:                                                 */
+/*   - Max 500 entries (caps RAM at ~500KB)                     */
+/*   - Dedupe by activity.id                                    */
+/*   - 24h max age (older entries evicted on each scan)         */
+/*   - Per-process — each warm instance has its own buffer      */
+/* ═══════════════════════════════════════════════════════════ */
+
+const BUFFER_MAX_ENTRIES = 500;
+const BUFFER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+interface BufferEntry {
+  activity: SuspiciousActivity;
+  /** When this activity first entered the buffer (epoch ms). */
+  firstSeenAt: number;
+}
+
+/* Single buffer keyed by activity.id. Same activity appearing
+   in two consecutive scans (due to overlapping block windows)
+   only counts once and keeps its original firstSeenAt. */
+const recentBuffer = new Map<string, BufferEntry>();
+
+/**
+ * Merge a fresh batch of activities into the buffer. Drops
+ * anything older than BUFFER_MAX_AGE_MS, then trims to the
+ * BUFFER_MAX_ENTRIES cap by keeping the most-recent-first.
+ */
+function mergeIntoBuffer(activities: SuspiciousActivity[]): void {
+  const now = Date.now();
+
+  /* Add or refresh entries from this scan. */
+  for (const a of activities) {
+    if (!recentBuffer.has(a.id)) {
+      recentBuffer.set(a.id, { activity: a, firstSeenAt: now });
+    }
+    /* If the entry already exists, leave firstSeenAt unchanged —
+       we want to remember when we FIRST saw it, not the last. */
+  }
+
+  /* Evict entries older than the max age. */
+  for (const [id, entry] of recentBuffer.entries()) {
+    if (now - entry.firstSeenAt > BUFFER_MAX_AGE_MS) {
+      recentBuffer.delete(id);
+    }
+  }
+
+  /* Cap total size — drop oldest entries beyond the limit. */
+  if (recentBuffer.size > BUFFER_MAX_ENTRIES) {
+    const sortedByAge = [...recentBuffer.entries()].sort(
+      (a, b) => a[1].firstSeenAt - b[1].firstSeenAt,
+    );
+    const toRemove = recentBuffer.size - BUFFER_MAX_ENTRIES;
+    for (let i = 0; i < toRemove; i++) {
+      recentBuffer.delete(sortedByAge[i][0]);
+    }
+  }
+}
+
+/**
+ * Read the buffer and return entries grouped by category, sorted
+ * within each group by firstSeenAt desc (most recent first).
+ */
+function readBuffer(): {
+  groups: ThreatGroups;
+  bufferedAt: number | null;
+  bufferSize: number;
+} {
+  const entries = [...recentBuffer.values()];
+  if (entries.length === 0) {
+    return {
+      groups: {
+        dexSwaps: [],
+        liquidityRemovals: [],
+        lendingActivity: [],
+        largeTransfers: [],
+      },
+      bufferedAt: null,
+      bufferSize: 0,
+    };
+  }
+
+  /* Sort by first-seen desc — newest first across the whole buffer. */
+  entries.sort((a, b) => b.firstSeenAt - a.firstSeenAt);
+
+  /* Group by category. */
+  const groups: ThreatGroups = {
+    dexSwaps: [],
+    liquidityRemovals: [],
+    lendingActivity: [],
+    largeTransfers: [],
+  };
+  for (const e of entries) {
+    const cat = e.activity.category;
+    if (cat === "dex_swap") groups.dexSwaps.push(e.activity);
+    else if (cat === "liquidity_removal") groups.liquidityRemovals.push(e.activity);
+    else if (cat === "lending") groups.lendingActivity.push(e.activity);
+    else if (cat === "large_transfer") groups.largeTransfers.push(e.activity);
+  }
+
+  /* Cap each category at 24 entries for display — beyond that the UI
+     gets unwieldy and most users only care about the recent stuff. */
+  groups.dexSwaps = groups.dexSwaps.slice(0, 24);
+  groups.liquidityRemovals = groups.liquidityRemovals.slice(0, 24);
+  groups.lendingActivity = groups.lendingActivity.slice(0, 24);
+  groups.largeTransfers = groups.largeTransfers.slice(0, 24);
+
+  /* Find the OLDEST firstSeenAt — that's how far back the buffer goes.
+     This is what we honestly tell the user instead of claiming "24h". */
+  const oldest = entries.reduce(
+    (min, e) => (e.firstSeenAt < min ? e.firstSeenAt : min),
+    entries[0].firstSeenAt,
+  );
+
+  return {
+    groups,
+    bufferedAt: oldest,
+    bufferSize: entries.length,
+  };
+}
 
 /* ═══════════════════════════════════════════════════════════ */
 /* Risk events (Etherscan-driven)                               */
@@ -307,6 +449,11 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
       tipBlocks: [],
       providerStats: [],
       providerRoutes,
+      recent: {
+        groups: emptyGroups,
+        oldestEntryAt: null,
+        bufferSize: 0,
+      },
       unconfigured: true,
       scannerStatus: { quicknodeConfigured, etherscanConfigured },
     };
@@ -507,6 +654,19 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
     largeTransfers: transferResult.activities,
   };
 
+  /* Merge ALL flagged activities (not just the top-N displayed) into
+     the rolling buffer. We use the full result sets so that scrolling
+     back through the "Recent" tab shows every individual warning that
+     surfaced during the session, not just whatever was top-8 each scan. */
+  const allFlagged: SuspiciousActivity[] = [
+    ...dexSwapsCombined, // full combined Uniswap+extended set, not the top-8 slice
+    ...removalResult.activities,
+    ...lendingResult.activities,
+    ...transferResult.activities,
+  ];
+  mergeIntoBuffer(allFlagged);
+  const bufferSnapshot = readBuffer();
+
   const dexEventsSeen =
     (uniswapResult?.totalEventsSeen ?? 0) + extendedDexResult.totalEventsSeen;
 
@@ -526,6 +686,11 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
     /* Snapshot per-provider attribution AFTER all scanners have run. */
     providerStats: getProviderStats(),
     providerRoutes,
+    recent: {
+      groups: bufferSnapshot.groups,
+      oldestEntryAt: bufferSnapshot.bufferedAt,
+      bufferSize: bufferSnapshot.bufferSize,
+    },
     unconfigured: false,
     scannerStatus: { quicknodeConfigured, etherscanConfigured },
   };
