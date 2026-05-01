@@ -38,6 +38,7 @@ import { scanLargeTransfers } from "./transferScanner";
 import { scanLiquidityRemovals } from "./liquidityRemovalScanner";
 import { scanLendingActivity } from "./lendingScanner";
 import { scanExtendedDex } from "./dexExtendedScanner";
+import { scanAdminEvents, type AdminRiskEvent } from "./adminEventScanner";
 import {
   decodeRiskFunction,
   severityWeight,
@@ -505,6 +506,7 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
     removalWrapped,
     lendingWrapped,
     transferWrapped,
+    adminEventsWrapped,
     riskEventsWrapped,
   ] = await Promise.all([
     quicknodeConfigured
@@ -558,10 +560,29 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
           error: "QuickNode not configured",
           durationMs: 0,
         }),
+    /* Risk events: chain-wide admin event scan (primary) plus
+       optional Etherscan function-call scan as a supplementary
+       source for the curated contract list. The chain-wide scan
+       requires QuickNode (uses eth_getLogs); the function-call
+       scan requires Etherscan. Both feed into the same RiskEvent
+       output. */
+    quicknodeConfigured
+      ? wrap(
+          "Risk events (admin events)",
+          scanAdminEvents(enabledChains, tipBlocks),
+        )
+      : Promise.resolve<
+          WrappedResult<{ events: AdminRiskEvent[]; totalEventsSeen: number }>
+        >({
+          name: "Risk events (admin events)",
+          result: null,
+          error: "QuickNode not configured",
+          durationMs: 0,
+        }),
     etherscanConfigured
-      ? wrap("Risk events (Etherscan)", scanRiskEvents())
+      ? wrap("Risk events (Etherscan calls)", scanRiskEvents())
       : Promise.resolve<WrappedResult<RiskEvent[]>>({
-          name: "Risk events (Etherscan)",
+          name: "Risk events (Etherscan calls)",
           result: null,
           error: "Etherscan API key not set",
           durationMs: 0,
@@ -586,7 +607,65 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
     activities: [],
     totalEventsSeen: 0,
   };
-  const riskEvents = riskEventsWrapped.result ?? [];
+  /* Admin events: chain-wide standardized event scan (the strong source). */
+  const adminEventsResult = adminEventsWrapped.result ?? {
+    events: [],
+    totalEventsSeen: 0,
+  };
+  /* Etherscan function-call scan: legacy supplementary source. May be empty
+     if the API key isn't configured or if the curated contracts haven't
+     emitted any risky calls recently. */
+  const etherscanRiskEvents = riskEventsWrapped.result ?? [];
+
+  /* Convert admin events to the RiskEvent shape. AdminRiskEvent is
+     structurally identical so this is a no-op cast at runtime, but
+     TypeScript needs the explicit map for type compatibility. */
+  const adminAsRiskEvents: RiskEvent[] = adminEventsResult.events.map((e) => ({
+    id: e.id,
+    txHash: e.txHash,
+    chain: e.chain,
+    chainId: e.chainId,
+    functionName: e.functionName,
+    signature: e.signature,
+    severity: e.severity,
+    description: e.description,
+    callerAddress: e.callerAddress,
+    callerLabel: e.callerLabel,
+    targetAddress: e.targetAddress,
+    targetLabel: e.targetLabel,
+    symbol: e.symbol,
+    txUrl: e.txUrl,
+    callerUrl: e.callerUrl,
+    targetUrl: e.targetUrl,
+    timestamp: e.timestamp,
+  }));
+
+  /* Combine both sources, dedupe by tx hash + function name (in
+     case Etherscan and the admin event scan both catch the same
+     event). Sort already happens inside each source's scanner;
+     final unified sort is by severity weight then timestamp. */
+  const combined = new Map<string, RiskEvent>();
+  for (const e of adminAsRiskEvents) {
+    const key = `${e.txHash}-${e.functionName}`;
+    combined.set(key, e);
+  }
+  for (const e of etherscanRiskEvents) {
+    const key = `${e.txHash}-${e.functionName}`;
+    if (!combined.has(key)) combined.set(key, e);
+  }
+  const sevWeightFinal: Record<string, number> = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    low: 1,
+  };
+  const riskEvents = [...combined.values()]
+    .sort((a, b) => {
+      const w = (sevWeightFinal[b.severity] ?? 0) - (sevWeightFinal[a.severity] ?? 0);
+      if (w !== 0) return w;
+      return b.timestamp - a.timestamp;
+    })
+    .slice(0, 50);
 
   /* Build diagnostics list */
   const diagnostics: ScannerDiagnostic[] = [
@@ -631,11 +710,19 @@ export async function fetchThreats(): Promise<ThreatsPayload> {
       durationMs: transferWrapped.durationMs,
     },
     {
+      name: adminEventsWrapped.name,
+      ok: adminEventsWrapped.error === "",
+      error: adminEventsWrapped.error,
+      eventsSeen: adminEventsResult.totalEventsSeen,
+      flagged: adminEventsResult.events.length,
+      durationMs: adminEventsWrapped.durationMs,
+    },
+    {
       name: riskEventsWrapped.name,
       ok: riskEventsWrapped.error === "",
       error: riskEventsWrapped.error,
       eventsSeen: riskEventsWrapped.result?.length ?? 0,
-      flagged: riskEvents.length,
+      flagged: etherscanRiskEvents.length,
       durationMs: riskEventsWrapped.durationMs,
     },
   ];

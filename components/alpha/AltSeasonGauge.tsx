@@ -52,21 +52,36 @@ export default function AltSeasonGauge() {
   const trackThickness = 14;
 
   function arcPath(startPct: number, endPct: number): string {
-    const startAngle = Math.PI - (startPct / 100) * Math.PI;
-    const endAngle = Math.PI - (endPct / 100) * Math.PI;
+    /* Clamp inputs into valid range to prevent NaN paths if data drifts. */
+    const sp = Math.max(0, Math.min(100, startPct));
+    const ep = Math.max(0, Math.min(100, endPct));
+    const startAngle = Math.PI - (sp / 100) * Math.PI;
+    const endAngle = Math.PI - (ep / 100) * Math.PI;
     const x1 = cx + radius * Math.cos(startAngle);
     const y1 = cy - radius * Math.sin(startAngle);
     const x2 = cx + radius * Math.cos(endAngle);
     const y2 = cy - radius * Math.sin(endAngle);
-    const largeArc = endPct - startPct > 50 ? 1 : 0;
-    return `M ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2}`;
+    /* The gauge spans only 180° (a half-circle), so the angular sweep
+       between any two points on the arc is at most 180°. SVG's
+       largeArc flag should be 1 only when the sweep EXCEEDS 180° —
+       which is impossible on a half-circle. Always 0. The previous
+       implementation set it to 1 when the percentage span exceeded
+       50%, which made the renderer draw the LONG way around (through
+       the bottom of the circle), producing the glitchy "flip" you'd
+       see whenever the index crossed 50. */
+    return `M ${x1} ${y1} A ${radius} ${radius} 0 0 1 ${x2} ${y2}`;
   }
 
-  /* Needle position. */
-  const needleAngle = Math.PI - (data.index / 100) * Math.PI;
+  /* Needle position. The needle is drawn pointing left from the
+     center pivot (rest position) and rotated clockwise via CSS
+     transform based on index. At index=0 → 0° rotation (points
+     left). At index=50 → 90° (points up). At index=100 → 180°
+     (points right). This rotation is what's actually animated; the
+     line geometry itself stays constant which is why the transition
+     works reliably. */
   const needleLen = radius - trackThickness;
-  const needleX = cx + needleLen * Math.cos(needleAngle);
-  const needleY = cy - needleLen * Math.sin(needleAngle);
+  const idx = Math.max(0, Math.min(100, data.index));
+  const needleRotationDeg = (idx / 100) * 180;
 
   return (
     <div className="card p-5" style={{ borderLeft: `3px solid ${accent}` }}>
@@ -144,28 +159,48 @@ export default function AltSeasonGauge() {
               opacity="0.55"
             />
 
-            {/* Active arc up to current index */}
-            <path
-              d={arcPath(0, data.index)}
-              fill="none"
-              stroke={accent}
-              strokeWidth={trackThickness - 4}
-              strokeLinecap="round"
-              style={{
-                filter: `drop-shadow(0 0 6px ${accent})`,
-              }}
-            />
+            {/* Active arc up to current index. Skip render entirely when
+                index is 0 — a zero-length arc with strokeLinecap="round"
+                produces a small dot that flickers when data refreshes.
+                The arc itself snaps on data refresh (SVG path `d`
+                animation is unreliable across browsers) but the snap
+                is brief enough not to be jarring once we removed the
+                largeArc bug that made it flip. */}
+            {data.index > 0 && (
+              <path
+                d={arcPath(0, data.index)}
+                fill="none"
+                stroke={accent}
+                strokeWidth={trackThickness - 4}
+                strokeLinecap="round"
+                style={{
+                  filter: `drop-shadow(0 0 6px ${accent})`,
+                }}
+              />
+            )}
 
-            {/* Needle */}
-            <line
-              x1={cx}
-              y1={cy}
-              x2={needleX}
-              y2={needleY}
-              stroke={accent}
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
+            {/* Needle. Drawn as a horizontal line at y=cy (pointing
+                left) and rotated into position via CSS transform.
+                This makes the rotation smoothly animatable across all
+                browsers — SVG `transform` on a `line` is well-supported
+                for animated transitions, while animating x2/y2 is not. */}
+            <g
+              style={{
+                transform: `rotate(${needleRotationDeg}deg)`,
+                transformOrigin: `${cx}px ${cy}px`,
+                transition: "transform 600ms cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
+            >
+              <line
+                x1={cx}
+                y1={cy}
+                x2={cx - needleLen}
+                y2={cy}
+                stroke={accent}
+                strokeWidth="2"
+                strokeLinecap="round"
+              />
+            </g>
             <circle cx={cx} cy={cy} r="4" fill={accent} />
 
             {/* Tick labels */}
