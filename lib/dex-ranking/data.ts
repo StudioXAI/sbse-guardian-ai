@@ -68,11 +68,10 @@ export const RANKING: DexEntry[] = [
       "Protocol-backed liquidity (no external LP risk)",
       "SbSe Shield protection + Reserve compensation system",
       "No listing fees, no trading fees, no interest, no collateral",
+      "InvertX stable protocol unit launching Q2–Q3 2026 with $100M+ protocol-backed liquidity",
+      "Multi-chain by design — no bridges, no wrapped tokens",
     ],
-    disadvantages: [
-      "InvertX core liquidity model launches Q2–Q3 2026 (planned)",
-      "Newer ecosystem — track record still being established",
-    ],
+    disadvantages: [],
     extendedSections: [
       {
         heading: "Core Components",

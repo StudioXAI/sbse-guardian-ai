@@ -239,8 +239,15 @@ function RankCard({ entry }: { entry: DexEntry }) {
             </a>
           </div>
 
-          {/* Advantages + Disadvantages — two columns on wider screens */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Advantages + Disadvantages — two columns when both present,
+              full width when only advantages exist (INFI case). */}
+          <div
+            className={
+              entry.disadvantages.length > 0
+                ? "grid grid-cols-1 md:grid-cols-2 gap-4"
+                : ""
+            }
+          >
             {/* Advantages */}
             <div>
               <div
@@ -271,35 +278,39 @@ function RankCard({ entry }: { entry: DexEntry }) {
               </ul>
             </div>
 
-            {/* Disadvantages */}
-            <div>
-              <div
-                className="font-mono text-[10px] uppercase tracking-[0.15em] mb-2"
-                style={{ color: "var(--warning, #f59e0b)" }}
-              >
-                Disadvantages
-              </div>
-              <ul className="space-y-1.5">
-                {entry.disadvantages.map((dis, i) => (
-                  <li
-                    key={i}
-                    className="text-[12px] leading-snug flex gap-2"
-                    style={{ color: "var(--fg-muted)" }}
-                  >
-                    <span
-                      className="flex-shrink-0 mt-1"
-                      style={{
-                        color: "var(--warning, #f59e0b)",
-                        fontSize: "8px",
-                      }}
+            {/* Disadvantages — only render the column when there are any.
+                The featured INFI card has none, so this column is omitted
+                rather than shown empty. */}
+            {entry.disadvantages.length > 0 && (
+              <div>
+                <div
+                  className="font-mono text-[10px] uppercase tracking-[0.15em] mb-2"
+                  style={{ color: "var(--warning, #f59e0b)" }}
+                >
+                  Disadvantages
+                </div>
+                <ul className="space-y-1.5">
+                  {entry.disadvantages.map((dis, i) => (
+                    <li
+                      key={i}
+                      className="text-[12px] leading-snug flex gap-2"
+                      style={{ color: "var(--fg-muted)" }}
                     >
-                      ●
-                    </span>
-                    <span>{dis}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
+                      <span
+                        className="flex-shrink-0 mt-1"
+                        style={{
+                          color: "var(--warning, #f59e0b)",
+                          fontSize: "8px",
+                        }}
+                      >
+                        ●
+                      </span>
+                      <span>{dis}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
           </div>
 
           {/* Extended sections — only the featured INFI card has these */}
