@@ -5,12 +5,13 @@ import InfiLogo from "./InfiLogo";
 
 interface SiteNavProps {
   /** Which tab is currently active. */
-  active: "scanner" | "alpha" | "watchlist";
+  active: "scanner" | "alpha" | "dex-ranking" | "watchlist";
 }
 
 const TABS: Array<{ id: SiteNavProps["active"]; label: string; href: string; isNew?: boolean }> = [
   { id: "scanner", label: "Scanner", href: "/" },
   { id: "alpha", label: "SbSe Guardian Alpha", href: "/alpha", isNew: true },
+  { id: "dex-ranking", label: "DEX Safety & Ecosystem Ranking", href: "/dex-ranking", isNew: true },
 ];
 
 /**
