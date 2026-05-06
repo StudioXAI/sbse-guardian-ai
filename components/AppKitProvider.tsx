@@ -6,7 +6,16 @@
    - QR code connection for mobile wallets
    - Injected wallet support for desktop (MetaMask, Rabby, Rainbow, etc.)
    - 300+ wallets supported via WalletConnect
-   - Configured for 6 supported payment chains
+
+   v29.1 UPDATE: Added 6 testnets (Sepolia, BSC Testnet, Polygon
+   Amoy, Arbitrum Sepolia, OP Sepolia, Base Sepolia) so the deploy
+   wizard can detect when the user's wallet is on a testnet and
+   trigger network switches via Reown.
+
+   Without testnets in this list, useAppKitNetwork().chainId
+   returns mainnet (1) when the wallet is on Sepolia, and
+   switchNetwork(11155111) silently fails. The deploy wizard
+   relies on both behaviors, so testnets MUST be registered here.
    ───────────────────────────────────────────────────────────── */
 
 import { createAppKit } from "@reown/appkit/react";
@@ -18,6 +27,12 @@ import {
   base,
   arbitrum,
   optimism,
+  sepolia,
+  bscTestnet,
+  polygonAmoy,
+  arbitrumSepolia,
+  optimismSepolia,
+  baseSepolia,
   type AppKitNetwork,
 } from "@reown/appkit/networks";
 import type { ReactNode } from "react";
@@ -36,11 +51,15 @@ const metadata = {
   ],
 };
 
-/** The 6 chains we accept payments on. */
-const networks = [mainnet, bsc, polygon, base, arbitrum, optimism] as [
-  AppKitNetwork,
-  ...AppKitNetwork[],
-];
+/** All chains the app supports — 6 mainnets + 6 testnets.
+    Mainnets are used for payments + listing discovery.
+    Testnets are used by the v29 deploy wizard. */
+const networks = [
+  /* Mainnets — payment chains */
+  mainnet, bsc, polygon, base, arbitrum, optimism,
+  /* Testnets — deploy wizard preview */
+  sepolia, bscTestnet, polygonAmoy, arbitrumSepolia, optimismSepolia, baseSepolia,
+] as [AppKitNetwork, ...AppKitNetwork[]];
 
 /**
  * Initialize AppKit ONCE at module load.
