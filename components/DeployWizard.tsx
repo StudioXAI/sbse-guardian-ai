@@ -37,6 +37,11 @@ import {
   getTemplate,
 } from "@/lib/deployer/templates";
 import { runSecurityScan, type ScanResult } from "@/lib/deployer/securityScan";
+import {
+  fetchTestnetBalance,
+  formatBalance,
+  copyToClipboard,
+} from "@/lib/deployer/testnetTokens";
 
 type WizardStep =
   | "chain"
@@ -850,8 +855,69 @@ function DeployStep({
   const [deploying, setDeploying] = useState(false);
   const [error, setError] = useState<string>("");
 
+  /* Testnet balance state — populated by polling once the user
+     is connected and on the right chain. The "ready" flag latches
+     true once a non-zero balance is seen and stays true even if
+     balance later decreases (e.g. user paid gas), so the green
+     "ready to deploy" indicator doesn't flicker. */
+  const [balance, setBalance] = useState<bigint | null>(null);
+  const [balanceLoaded, setBalanceLoaded] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [copyToast, setCopyToast] = useState<string>("");
+
   const onCorrectChain =
     isConnected && network.chainId === chain.testnetChainId;
+
+  /* Poll testnet balance every 15s while connected on right chain.
+     Stops once we see a non-zero balance — no point continuing to
+     spend RPC calls if the user already has funds. */
+  useEffect(() => {
+    if (!isConnected || !address || !onCorrectChain || ready) return;
+
+    let cancelled = false;
+    async function pollBalance() {
+      const bal = await fetchTestnetBalance(chain, address!);
+      if (cancelled) return;
+      setBalanceLoaded(true);
+      if (bal !== null) {
+        setBalance(bal);
+        if (bal > BigInt(0)) setReady(true);
+      }
+    }
+
+    pollBalance();
+    const interval = setInterval(pollBalance, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [isConnected, address, onCorrectChain, ready, chain]);
+
+  /* Auto-dismiss the copy toast after 2.5 seconds. */
+  useEffect(() => {
+    if (!copyToast) return;
+    const timer = setTimeout(() => setCopyToast(""), 2500);
+    return () => clearTimeout(timer);
+  }, [copyToast]);
+
+  async function handleGetTestTokens() {
+    if (!address) return;
+    /* Order matters: copy address first so the await resolves
+       within the user-initiated event handler (clipboard APIs
+       require this on most browsers). Then open faucet in a new
+       tab. */
+    const copied = await copyToClipboard(address);
+    setCopyToast(
+      copied
+        ? `Address copied — paste it in the faucet`
+        : `Couldn't auto-copy — your address: ${address.slice(0, 10)}…${address.slice(-4)}`,
+    );
+    /* Open in a new tab. Some popup blockers may prevent this
+       if the click handler became "non-trusted" after the await,
+       but in practice modern browsers allow it because clipboard
+       writes don't break the trust chain. */
+    window.open(chain.testnetFaucetUrl, "_blank", "noopener,noreferrer");
+  }
 
   async function handleDeploy() {
     setError("");
@@ -1045,20 +1111,93 @@ function DeployStep({
               ? "DEPLOYING — DO NOT CLOSE THIS TAB…"
               : `DEPLOY TO ${chain.testnetName.toUpperCase()}`}
           </button>
-          <p
-            className="text-[10px] text-center"
-            style={{ color: "var(--fg-dim)" }}
+
+          {/* Testnet tokens panel — shows current balance and a
+              one-click button to claim test tokens from the faucet
+              with the user's address pre-copied to clipboard. */}
+          <div
+            className="card p-3"
+            style={{
+              background: ready
+                ? "rgba(34,209,96,0.06)"
+                : "var(--bg-elevated)",
+              border: ready
+                ? "1px solid rgba(34,209,96,0.4)"
+                : "1px solid var(--border)",
+              transition: "background 200ms, border 200ms",
+            }}
           >
-            Need test {chain.nativeSymbol}?{" "}
-            <a
-              href={chain.testnetFaucetUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "var(--accent-soft)" }}
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <div
+                  className="font-mono text-[10px] tracking-[0.1em] uppercase"
+                  style={{
+                    color: ready
+                      ? "var(--success, #10b981)"
+                      : "var(--fg-dim)",
+                  }}
+                >
+                  {ready ? "✓ Ready to deploy" : "Testnet balance"}
+                </div>
+                <div
+                  className="text-[14px] font-medium mt-0.5"
+                  style={{
+                    color: ready ? "var(--fg)" : "var(--fg-muted)",
+                    fontFamily: "monospace",
+                  }}
+                >
+                  {!balanceLoaded
+                    ? "Checking…"
+                    : balance === null
+                    ? "Unable to read balance"
+                    : `${formatBalance(balance)} ${chain.nativeSymbol}`}
+                </div>
+              </div>
+              {!ready && (
+                <button
+                  type="button"
+                  onClick={handleGetTestTokens}
+                  className="font-mono text-[10px] px-3 py-2 rounded"
+                  style={{
+                    background: "var(--bg-subtle)",
+                    color: "var(--accent-soft)",
+                    border: "1px solid var(--accent-soft)",
+                    cursor: "pointer",
+                    letterSpacing: "0.05em",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  GET TEST {chain.nativeSymbol} →
+                </button>
+              )}
+            </div>
+            {!ready && (
+              <p
+                className="text-[10px] mt-2"
+                style={{ color: "var(--fg-dim)" }}
+              >
+                Click the button to copy your wallet address and
+                open the {chain.testnetName} faucet. Paste your
+                address in the faucet, claim tokens, then come
+                back here — your balance refreshes automatically
+                every 15 seconds.
+              </p>
+            )}
+          </div>
+
+          {/* Copy toast — shows briefly when address is copied */}
+          {copyToast && (
+            <div
+              className="card p-2 text-[11px] text-center"
+              style={{
+                background: "rgba(108,99,255,0.08)",
+                borderLeft: "2px solid var(--accent-soft)",
+                color: "var(--fg)",
+              }}
             >
-              {chain.testnetName} faucet →
-            </a>
-          </p>
+              {copyToast}
+            </div>
+          )}
         </>
       )}
 
