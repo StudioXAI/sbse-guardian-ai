@@ -1,18 +1,15 @@
 /* ─────────────────────────────────────────────────────────────
    executeDeploy — Wagmi/viem-based contract deployment
 
-   Called from the wizard's deploy step. Builds the constructor
-   calldata, asks the user's connected wallet to sign and broadcast
-   the deployment transaction, waits for confirmation, and returns
-   the deployed contract address from the receipt.
+   v29.5 SIMPLIFICATION: Fees removed. Mainnet deploys are free
+   for everyone in this version. The InvertX holdings gate (see
+   invertxGate.ts) will replace fee gating in a future version
+   when InvertX launches.
 
-   This is a thin wrapper around Wagmi's deployContract action.
-   The reason it lives in its own module: dynamic import in the
-   wizard component, so Wagmi internals don't get pulled into
-   the initial bundle.
+   This module is now a thin wrapper around Wagmi's deployContract
+   action that works for both testnet and mainnet chain IDs.
    ───────────────────────────────────────────────────────────── */
 
-import type { Address } from "viem";
 import {
   getWalletClient,
   waitForTransactionReceipt,
@@ -28,20 +25,21 @@ export interface ExecuteDeployInput {
   template: TokenTemplate;
   parameters: Record<string, string | number>;
   deployerAddress: string;
+  /** Whether this is a mainnet deploy. Drives chain ID selection. */
+  isMainnet: boolean;
 }
 
 export interface ExecuteDeployResult {
   contractAddress: string;
   txHash: string;
   blockNumber: number;
+  /** The actual chain ID used for deploy (testnet or mainnet). */
+  chainId: number;
 }
 
 /**
- * Build the constructor calldata for a template + params combo.
- * The bytecode the user signs is `template.bytecode + encodedArgs`.
- * Wagmi handles this automatically when we pass `args`, but we
- * still need to assemble the args array in the correct order
- * matching the constructor signature.
+ * Build the constructor args for a template + params combo,
+ * matching the constructor signature in the template.
  */
 function buildConstructorArgs(
   template: TokenTemplate,
@@ -55,22 +53,15 @@ function buildConstructorArgs(
       case "uint8":
         return Number(v ?? 0);
       case "uint256":
-        /* Constructor expects raw uint256. Initial supply is given
-           in whole tokens (e.g. 1_000_000) and the contract scales
-           by 10**decimals internally — so just BigInt the value. */
         return BigInt(v ?? 0);
       case "address":
-        return v as Address;
+        return v;
       default:
         return v;
     }
   });
 }
 
-/**
- * Build a constructor signature string from the template parameters.
- * Used for the ABI required by viem's deployContract action.
- */
 function buildConstructorAbi(template: TokenTemplate) {
   return [
     {
@@ -87,7 +78,7 @@ function buildConstructorAbi(template: TokenTemplate) {
 export async function executeDeploy(
   input: ExecuteDeployInput,
 ): Promise<ExecuteDeployResult> {
-  const { chain, template, parameters } = input;
+  const { chain, template, parameters, isMainnet } = input;
 
   if (!template.bytecodeReady) {
     throw new Error(
@@ -95,33 +86,40 @@ export async function executeDeploy(
     );
   }
 
+  /* Pick the chain ID based on mode. Mainnet vs testnet is the
+     only branch in this whole module. */
+  const chainIdToUse = isMainnet
+    ? chain.mainnetChainId
+    : chain.testnetChainId;
+  const chainName = isMainnet ? chain.name : chain.testnetName;
+
   const args = buildConstructorArgs(template, parameters);
   const abi = buildConstructorAbi(template);
 
-  /* Confirm we have a wallet client on the right chain. */
+  /* Confirm wallet is connected on the chosen chain. */
   const walletClient = await getWalletClient(wagmiConfig as Config, {
-    chainId: chain.testnetChainId,
+    chainId: chainIdToUse,
   });
   if (!walletClient) {
     throw new Error(
-      `No wallet connected to chain ${chain.testnetChainId}. Connect your wallet and switch to ${chain.testnetName}.`,
+      `No wallet connected to chain ${chainIdToUse}. Connect your wallet and switch to ${chainName}.`,
     );
   }
 
-  /* Submit deploy. This prompts the user's wallet to sign. */
+  /* Submit deploy. The user's wallet prompts for signature. */
   const txHash = await deployContract(wagmiConfig as Config, {
     abi,
     bytecode: template.bytecode,
     args,
-    chainId: chain.testnetChainId,
+    chainId: chainIdToUse,
   });
 
-  /* Wait for confirmation. The receipt contains the deployed
-     contract address. */
+  /* Wait for confirmation. Mainnet deploys may take 1-3 minutes
+     during high gas; testnets usually under 30 seconds. */
   const receipt = await waitForTransactionReceipt(wagmiConfig as Config, {
     hash: txHash,
-    chainId: chain.testnetChainId,
-    timeout: 180_000, // 3 minutes
+    chainId: chainIdToUse,
+    timeout: 300_000, // 5 minutes
   });
 
   if (receipt.status !== "success") {
@@ -132,7 +130,7 @@ export async function executeDeploy(
 
   if (!receipt.contractAddress) {
     throw new Error(
-      "Transaction confirmed but no contract address in receipt. This is unexpected — please check the block explorer for the deployment.",
+      "Transaction confirmed but no contract address in receipt. Check the block explorer for the deployment.",
     );
   }
 
@@ -140,5 +138,6 @@ export async function executeDeploy(
     contractAddress: receipt.contractAddress,
     txHash,
     blockNumber: Number(receipt.blockNumber),
+    chainId: chainIdToUse,
   };
 }

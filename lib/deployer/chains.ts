@@ -15,9 +15,10 @@
    vars (DEPLOYER_FEE_ETH_WEI, DEPLOYER_FEE_BNB_WEI, etc.) without
    a code deploy.
 
-   v29 NOTE: fees are NOT collected on testnet. The constants below
-   are reference for v29.5 mainnet. Testnet deploys are free except
-   for the user's own gas.
+   v29.5 NOTE: fees are collected on mainnet only. Testnet deploys
+   are still free except for the user's own gas. The fee receiver
+   is INFI_FEE_WALLET (env var) — see executeDeploy.ts for the
+   two-tx fee+deploy flow.
    ───────────────────────────────────────────────────────────── */
 
 export type DeployerChainId = "ethereum" | "bsc" | "polygon" | "arbitrum" | "optimism" | "base";
@@ -44,6 +45,10 @@ export interface DeployerChain {
       generous rate limits suitable for occasional balance reads
       from individual users. */
   testnetRpcUrl: string;
+  /** Public RPC URL for mainnet — used by the wizard's mainnet
+      balance-check and the public deployment proxy's contract-
+      existence verification. */
+  mainnetRpcUrl: string;
   /** Hardcoded mainnet fee in wei. ~$5 USDT equivalent at the
       time of writing. Update as native prices drift, OR set env
       var DEPLOYER_FEE_<SYMBOL>_WEI to override at runtime. */
@@ -70,6 +75,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://etherscan.io",
     testnetExplorer: "https://sepolia.etherscan.io",
     testnetRpcUrl: "https://ethereum-sepolia-rpc.publicnode.com",
+    mainnetRpcUrl: "https://ethereum-rpc.publicnode.com",
     mainnetFeeWei: BigInt("2000000000000000"), // 0.002 ETH
     testnetFaucetUrl: "https://sepoliafaucet.com",
   },
@@ -83,6 +89,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://bscscan.com",
     testnetExplorer: "https://testnet.bscscan.com",
     testnetRpcUrl: "https://data-seed-prebsc-1-s1.binance.org:8545",
+    mainnetRpcUrl: "https://bsc-rpc.publicnode.com",
     mainnetFeeWei: BigInt("8300000000000000"), // 0.0083 BNB
     testnetFaucetUrl: "https://www.bnbchain.org/en/testnet-faucet",
   },
@@ -96,6 +103,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://polygonscan.com",
     testnetExplorer: "https://amoy.polygonscan.com",
     testnetRpcUrl: "https://rpc-amoy.polygon.technology",
+    mainnetRpcUrl: "https://polygon-rpc.com",
     mainnetFeeWei: BigInt("12500000000000000000"), // 12.5 POL
     testnetFaucetUrl: "https://faucet.polygon.technology",
   },
@@ -109,6 +117,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://arbiscan.io",
     testnetExplorer: "https://sepolia.arbiscan.io",
     testnetRpcUrl: "https://sepolia-rollup.arbitrum.io/rpc",
+    mainnetRpcUrl: "https://arb1.arbitrum.io/rpc",
     mainnetFeeWei: BigInt("2000000000000000"), // 0.002 ETH
     testnetFaucetUrl: "https://faucet.quicknode.com/arbitrum/sepolia",
   },
@@ -122,6 +131,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://optimistic.etherscan.io",
     testnetExplorer: "https://sepolia-optimism.etherscan.io",
     testnetRpcUrl: "https://sepolia.optimism.io",
+    mainnetRpcUrl: "https://mainnet.optimism.io",
     mainnetFeeWei: BigInt("2000000000000000"),
     testnetFaucetUrl: "https://app.optimism.io/faucet",
   },
@@ -135,6 +145,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://basescan.org",
     testnetExplorer: "https://sepolia.basescan.org",
     testnetRpcUrl: "https://sepolia.base.org",
+    mainnetRpcUrl: "https://mainnet.base.org",
     mainnetFeeWei: BigInt("2000000000000000"),
     testnetFaucetUrl: "https://faucet.quicknode.com/base/sepolia",
   },

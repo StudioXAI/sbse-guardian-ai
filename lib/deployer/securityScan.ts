@@ -43,6 +43,10 @@ export interface SecurityCheck {
 export interface ScanInput {
   template: TokenTemplate;
   parameters: Record<string, string | number>;
+  /** Deploy mode — drives stricter rules on mainnet.
+      v29.5: impersonation patterns become fail (was warn) on mainnet
+      so scam-token factories can't trivially clone USDT/USDC etc. */
+  mode?: "testnet" | "mainnet";
 }
 
 export interface ScanResult {
@@ -110,7 +114,10 @@ function checkBytecodeReady(template: TokenTemplate): SecurityCheck {
   };
 }
 
-function checkNameAndSymbol(parameters: Record<string, string | number>): SecurityCheck[] {
+function checkNameAndSymbol(
+  parameters: Record<string, string | number>,
+  mode: "testnet" | "mainnet" = "testnet",
+): SecurityCheck[] {
   const checks: SecurityCheck[] = [];
   const name = String(parameters.name ?? "").trim();
   const symbol = String(parameters.symbol ?? "").trim();
@@ -170,16 +177,23 @@ function checkNameAndSymbol(parameters: Record<string, string | number>): Securi
     });
   }
 
-  /* Impersonation check */
+  /* Impersonation check — severity escalates on mainnet to block
+     scam-token factories that clone USDT/USDC/etc. names. */
   const combinedText = `${name} ${symbol}`;
   for (const pattern of IMPERSONATION_PATTERNS) {
     if (pattern.test(combinedText)) {
+      const severity: CheckSeverity = mode === "mainnet" ? "fail" : "warn";
       checks.push({
         id: "impersonation-risk",
-        label: "Possible impersonation",
-        severity: "warn",
+        label:
+          mode === "mainnet"
+            ? "Impersonation blocked on mainnet"
+            : "Possible impersonation",
+        severity,
         detail:
-          "Your token name or symbol matches a well-known project. Cloning popular project names is a common scam pattern and may get your token flagged on aggregators. If this is intentional and legitimate (e.g. a fork), proceed with caution.",
+          mode === "mainnet"
+            ? "Your token name or symbol matches a well-known project. INFI blocks contracts that look like impersonations of major projects (USDT, USDC, Uniswap, etc.) on mainnet to prevent the verified badge from being attached to scam tokens. If this is a legitimate fork or you have authorization, contact support@infimultichain.com."
+            : "Your token name or symbol matches a well-known project. Cloning popular project names is a common scam pattern and may get your token flagged on aggregators. If this is intentional and legitimate (e.g. a fork), proceed with caution.",
       });
       break;
     }
@@ -280,9 +294,10 @@ function checkDecimals(parameters: Record<string, string | number>): SecurityChe
 
 export function runSecurityScan(input: ScanInput): ScanResult {
   const checks: SecurityCheck[] = [];
+  const mode = input.mode ?? "testnet";
 
   checks.push(checkBytecodeReady(input.template));
-  checks.push(...checkNameAndSymbol(input.parameters));
+  checks.push(...checkNameAndSymbol(input.parameters, mode));
   checks.push(checkSupply(input.parameters));
   checks.push(checkDecimals(input.parameters));
 

@@ -143,6 +143,39 @@ function rateLimit(ip: string): { allowed: boolean; resetIn?: number } {
   return { allowed: true };
 }
 
+/* Per-wallet mainnet rate limit — abuse mitigation for the
+   free-deploy preview window. Limits a single deployer wallet
+   to 1 mainnet deploy per 24 hours. Does not apply on testnet
+   where free spam is acceptable.
+
+   In-memory map: resets on serverless cold start. A determined
+   attacker could exploit the cold-start window but they'd hit
+   the IP rate limit too. Acceptable for v29.5; tighten later if
+   abuse becomes a real problem. */
+const walletDeployMap = new Map<string, number>();
+const WALLET_RATE_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+function walletRateLimit(
+  deployer: string,
+  isMainnet: boolean,
+): { allowed: boolean; resetIn?: number } {
+  if (!isMainnet) return { allowed: true }; // testnet has no per-wallet limit
+
+  const key = deployer.toLowerCase();
+  const now = Date.now();
+  const lastDeploy = walletDeployMap.get(key);
+
+  if (lastDeploy && now - lastDeploy < WALLET_RATE_WINDOW_MS) {
+    const resetIn = Math.ceil(
+      (WALLET_RATE_WINDOW_MS - (now - lastDeploy)) / 1000,
+    );
+    return { allowed: false, resetIn };
+  }
+
+  walletDeployMap.set(key, now);
+  return { allowed: true };
+}
+
 /* Verify the contract actually exists on-chain. The cheapest
    way is eth_getCode — if the contract has no deployed bytecode,
    the result is "0x" or "0x0". If it has code, the result is
@@ -248,16 +281,26 @@ export async function POST(request: Request) {
     );
   }
 
-  /* Contract-exists check — prevents users from registering
-     ghost entries for contracts that don't exist on-chain.
-     v29 NOTE: this only verifies on the configured QuickNode
-     mainnet endpoints. Testnet deploys won't pass this check
-     yet — we accept testnet entries unconditionally during the
-     v29 preview window. v29.5 will add testnet RPC endpoints
-     to the verification pool. */
+  /* Per-wallet rate limit — applies to mainnet only, prevents
+     a single deployer from spamming the New Projects feed and
+     burning the verified badge on mass-produced scam factories. */
   const isTestnet = (request.headers.get("x-deploy-context") ?? "")
     .toLowerCase()
     .includes("testnet");
+  const walletRl = walletRateLimit(data.deployer, !isTestnet);
+  if (!walletRl.allowed) {
+    const hours = Math.ceil((walletRl.resetIn ?? 0) / 3600);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `One mainnet deploy per wallet per 24h. Try again in ~${hours}h, or use a different wallet.`,
+      },
+      { status: 429 },
+    );
+  }
+
+  /* Contract-exists check — prevents users from registering
+     ghost entries for contracts that don't exist on-chain. */
   if (!isTestnet) {
     const exists = await verifyContractExists(data.chain, data.contractAddress);
     if (!exists) {

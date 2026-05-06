@@ -12,8 +12,10 @@
      6. DEPLOY    — connect wallet, sign tx, watch for confirmation
      7. SUCCESS   — show deployed contract details + next steps
 
-   v29 NOTE: testnet only. No fees collected. v29.5 adds mainnet
-   path with native-token fee collection.
+   v29.0  — testnet only, no fees
+   v29.5  — mainnet unlocked, free for everyone (no INFI fee charged).
+            Future versions may gate mainnet by INVERTX holdings via
+            lib/deployer/invertxGate.ts.
 
    This file is the wizard shell + state machine. Each step's UI
    lives in a sub-component below for readability.
@@ -63,6 +65,16 @@ interface DeploymentResult {
 export default function DeployWizard() {
   /* Wizard state */
   const [step, setStep] = useState<WizardStep>("chain");
+  /* Mode: testnet (free, default) vs mainnet (free, real chain).
+     Toggle available on the chain step. The mode is locked once
+     the user picks a chain so they can't accidentally switch
+     contexts mid-wizard.
+
+     v29.5: Mainnet is unlocked but free for everyone. A future
+     version may gate mainnet by INVERTX holdings (see
+     lib/deployer/invertxGate.ts) — currently every wallet can
+     deploy on mainnet. */
+  const [deployMode, setDeployMode] = useState<"testnet" | "mainnet">("testnet");
   const [chainId, setChainId] = useState<DeployerChainId | null>(null);
   const [templateId, setTemplateId] = useState<TemplateId | null>(null);
   const [parameters, setParameters] = useState<Record<string, string | number>>({});
@@ -86,6 +98,7 @@ export default function DeployWizard() {
 
   function reset() {
     setStep("chain");
+    setDeployMode("testnet");
     setChainId(null);
     setTemplateId(null);
     setParameters({});
@@ -105,7 +118,7 @@ export default function DeployWizard() {
           className="font-mono text-[10px] tracking-[0.2em] uppercase"
           style={{ color: "var(--accent-soft)" }}
         >
-          Deploy Wizard · Testnet (v29 preview)
+          Deploy Wizard · {deployMode === "mainnet" ? "Mainnet (real money)" : "Testnet (free)"}
         </div>
         <h1
           className="text-2xl md:text-3xl font-medium tracking-tight"
@@ -118,27 +131,35 @@ export default function DeployWizard() {
           style={{ color: "var(--fg-muted)" }}
         >
           No-code ERC-20 deployment using OpenZeppelin templates with an
-          automated pre-deployment security scan. Currently testnet only —
-          mainnet deployment with $5 native-token fee coming in v29.5.
+          automated pre-deployment security scan. Both testnet and mainnet
+          are supported — mainnet is currently free for all users (you only
+          pay your own network gas).
         </p>
       </div>
 
-      {/* Mainnet preview banner */}
+      {/* Mode banner */}
       <div
         className="card p-3 text-[11px]"
         style={{
           color: "var(--fg-dim)",
-          borderLeft: "2px solid var(--accent-soft)",
+          borderLeft: deployMode === "mainnet"
+            ? "2px solid var(--warning, #f59e0b)"
+            : "2px solid var(--accent-soft)",
         }}
       >
         <span
           className="font-mono uppercase tracking-[0.1em]"
-          style={{ color: "var(--accent-soft)" }}
+          style={{
+            color: deployMode === "mainnet"
+              ? "var(--warning, #f59e0b)"
+              : "var(--accent-soft)",
+          }}
         >
-          Preview ·{" "}
+          {deployMode === "mainnet" ? "Live mainnet · " : "Testnet preview · "}
         </span>
-        Testnet deploys are free except for your own gas. You'll need test
-        ETH/BNB/POL — links to faucets are shown when you select a chain.
+        {deployMode === "mainnet"
+          ? "Free to deploy on live mainnets — INFI does not charge a fee in this version. You only pay your own gas. Contracts are immutable and immediately public."
+          : "Testnet deploys are free except for your own gas. You'll need test ETH/BNB/POL — links to faucets are shown when you select a chain."}
       </div>
 
       {/* Step indicator */}
@@ -147,6 +168,8 @@ export default function DeployWizard() {
       {/* Active step body */}
       {step === "chain" && (
         <ChainStep
+          mode={deployMode}
+          onModeChange={setDeployMode}
           onSelect={(id) => {
             setChainId(id);
             setStep("template");
@@ -176,7 +199,11 @@ export default function DeployWizard() {
           parameters={parameters}
           onChange={setParameters}
           onContinue={() => {
-            const result = runSecurityScan({ template, parameters });
+            const result = runSecurityScan({
+              template,
+              parameters,
+              mode: deployMode,
+            });
             setScanResult(result);
             setStep("scan");
           }}
@@ -201,6 +228,7 @@ export default function DeployWizard() {
       {step === "deploy" && chain && template && (
         <DeployStep
           chain={chain}
+          mode={deployMode}
           template={template}
           parameters={parameters}
           intentData={intentData}
@@ -212,7 +240,12 @@ export default function DeployWizard() {
         />
       )}
       {step === "success" && deployResult && chain && (
-        <SuccessStep result={deployResult} chain={chain} onReset={reset} />
+        <SuccessStep
+          result={deployResult}
+          chain={chain}
+          mode={deployMode}
+          onReset={reset}
+        />
       )}
     </main>
   );
@@ -273,47 +306,209 @@ function StepIndicator({ step }: { step: WizardStep }) {
    Step 1 — Chain selection
    ───────────────────────────────────────────────────────────── */
 
-function ChainStep({ onSelect }: { onSelect: (id: DeployerChainId) => void }) {
+function ChainStep({
+  mode,
+  onModeChange,
+  onSelect,
+}: {
+  mode: "testnet" | "mainnet";
+  onModeChange: (m: "testnet" | "mainnet") => void;
+  onSelect: (id: DeployerChainId) => void;
+}) {
   const chains = listDeployerChains();
+  /* Track whether user has confirmed they understand mainnet
+     consequences. Until they do, the cards are gated. Resets
+     when mode flips back to testnet. */
+  const [mainnetAcknowledged, setMainnetAcknowledged] = useState(false);
+
+  /* Switching to testnet should clear acknowledgment. Switching
+     to mainnet requires explicit acknowledgment before cards are
+     selectable. */
+  function handleModeChange(next: "testnet" | "mainnet") {
+    if (next === "testnet") setMainnetAcknowledged(false);
+    onModeChange(next);
+  }
+
   return (
-    <div className="space-y-3">
-      <SectionHeader>Choose a testnet</SectionHeader>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {chains.map((c) => (
+    <div className="space-y-4">
+      {/* Mode toggle */}
+      <div
+        className="card p-3 flex items-center justify-between gap-3 flex-wrap"
+        style={{
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border)",
+        }}
+      >
+        <div>
+          <div
+            className="font-mono text-[10px] tracking-[0.1em] uppercase"
+            style={{ color: "var(--fg-dim)" }}
+          >
+            Deployment mode
+          </div>
+          <div
+            className="text-[12px] mt-0.5"
+            style={{ color: "var(--fg-muted)" }}
+          >
+            {mode === "testnet"
+              ? "Free testnet deploys for testing"
+              : "Free mainnet deploys — only your gas"}
+          </div>
+        </div>
+        <div
+          className="flex items-center rounded-md overflow-hidden"
+          style={{
+            background: "var(--bg-subtle)",
+            border: "1px solid var(--border)",
+          }}
+        >
           <button
-            key={c.id}
             type="button"
-            onClick={() => onSelect(c.id)}
-            className="card p-4 text-left hover:border-[var(--accent-soft)] transition-colors"
+            onClick={() => handleModeChange("testnet")}
+            className="font-mono text-[10px] px-3 py-2 transition-colors"
             style={{
+              background:
+                mode === "testnet"
+                  ? "linear-gradient(135deg, var(--accent), var(--accent-soft))"
+                  : "transparent",
+              color: mode === "testnet" ? "#fff" : "var(--fg-muted)",
+              border: "none",
               cursor: "pointer",
-              background: "var(--bg-elevated)",
-              border: "1px solid var(--border)",
+              letterSpacing: "0.05em",
             }}
           >
-            <div className="flex items-center justify-between mb-1">
-              <span
-                className="font-medium"
-                style={{ color: "var(--fg)" }}
-              >
-                {c.name}
-              </span>
-              <span
-                className="font-mono text-[9px] uppercase tracking-[0.05em]"
-                style={{ color: "var(--fg-dim)" }}
-              >
-                {c.testnetName}
-              </span>
-            </div>
-            <div
-              className="text-[11px]"
-              style={{ color: "var(--fg-muted)" }}
-            >
-              Native: {c.nativeSymbol} · ChainID {c.testnetChainId}
-            </div>
+            TESTNET
           </button>
-        ))}
+          <button
+            type="button"
+            onClick={() => handleModeChange("mainnet")}
+            className="font-mono text-[10px] px-3 py-2 transition-colors"
+            style={{
+              background:
+                mode === "mainnet"
+                  ? "linear-gradient(135deg, var(--danger), #f59e0b)"
+                  : "transparent",
+              color: mode === "mainnet" ? "#fff" : "var(--fg-muted)",
+              border: "none",
+              cursor: "pointer",
+              letterSpacing: "0.05em",
+            }}
+          >
+            MAINNET
+          </button>
+        </div>
       </div>
+
+      {/* Mainnet acknowledgment gate */}
+      {mode === "mainnet" && !mainnetAcknowledged && (
+        <div
+          className="card p-4 space-y-3"
+          style={{
+            background: "rgba(239,68,68,0.05)",
+            borderLeft: "3px solid var(--danger)",
+          }}
+        >
+          <div
+            className="font-mono text-[11px] tracking-[0.1em] uppercase"
+            style={{ color: "var(--warning, #f59e0b)" }}
+          >
+            ⚠ Mainnet mode
+          </div>
+          <div
+            className="text-[12px] leading-relaxed space-y-2"
+            style={{ color: "var(--fg-muted)" }}
+          >
+            <p>
+              You're switching to <strong style={{ color: "var(--fg)" }}>live mainnet mode</strong>.
+              Every deploy on this mode:
+            </p>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>
+                Is <strong style={{ color: "var(--success, #10b981)" }}>free during this version</strong> —
+                INFI does not charge a deployment fee
+              </li>
+              <li>Charges your wallet's gas for the deploy transaction (paid to network validators, not INFI)</li>
+              <li>Deploys an immutable contract to the live blockchain — it cannot be undone</li>
+              <li>Makes the contract publicly visible on block explorers and aggregators</li>
+            </ul>
+            <p
+              className="text-[11px]"
+              style={{ color: "var(--fg-dim)" }}
+            >
+              Future versions may gate mainnet access by INVERTX token holdings.
+              No fees are charged in this version.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMainnetAcknowledged(true)}
+            className="font-mono text-[11px] px-4 py-2 rounded transition-colors"
+            style={{
+              background: "var(--accent-soft)",
+              color: "#fff",
+              border: "none",
+              cursor: "pointer",
+              letterSpacing: "0.05em",
+            }}
+          >
+            I UNDERSTAND — CONTINUE TO CHAIN SELECTION
+          </button>
+        </div>
+      )}
+
+      {/* Chain cards — only visible after acknowledgment when in mainnet mode */}
+      {(mode === "testnet" || mainnetAcknowledged) && (
+        <>
+          <SectionHeader>
+            {mode === "mainnet" ? "Choose a mainnet" : "Choose a testnet"}
+          </SectionHeader>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {chains.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onSelect(c.id)}
+                className="card p-4 text-left hover:border-[var(--accent-soft)] transition-colors"
+                style={{
+                  cursor: "pointer",
+                  background: "var(--bg-elevated)",
+                  border: "1px solid var(--border)",
+                }}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span
+                    className="font-medium"
+                    style={{ color: "var(--fg)" }}
+                  >
+                    {c.name}
+                  </span>
+                  <span
+                    className="font-mono text-[9px] uppercase tracking-[0.05em]"
+                    style={{ color: "var(--fg-dim)" }}
+                  >
+                    {mode === "mainnet" ? "Mainnet" : c.testnetName}
+                  </span>
+                </div>
+                <div
+                  className="text-[11px]"
+                  style={{ color: "var(--fg-muted)" }}
+                >
+                  Native: {c.nativeSymbol} · ChainID{" "}
+                  {mode === "mainnet" ? c.mainnetChainId : c.testnetChainId}
+                </div>
+                {mode === "mainnet" && (
+                  <div
+                    className="text-[10px] mt-1 font-mono"
+                    style={{ color: "var(--success, #10b981)" }}
+                  >
+                    Free deploy — you only pay your own gas
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -829,6 +1024,7 @@ function IntentStep({
 
 function DeployStep({
   chain,
+  mode,
   template,
   parameters,
   intentData,
@@ -836,6 +1032,7 @@ function DeployStep({
   onBack,
 }: {
   chain: (typeof DEPLOYER_CHAINS)[DeployerChainId];
+  mode: "testnet" | "mainnet";
   template: TokenTemplate;
   parameters: Record<string, string | number>;
   intentData: {
@@ -854,29 +1051,41 @@ function DeployStep({
   const network = useAppKitNetwork();
   const [deploying, setDeploying] = useState(false);
   const [error, setError] = useState<string>("");
+  const isMainnet = mode === "mainnet";
 
-  /* Testnet balance state — populated by polling once the user
-     is connected and on the right chain. The "ready" flag latches
-     true once a non-zero balance is seen and stays true even if
-     balance later decreases (e.g. user paid gas), so the green
-     "ready to deploy" indicator doesn't flicker. */
+  /* Mode-resolved chain context. */
+  const targetChainId =
+    isMainnet ? chain.mainnetChainId : chain.testnetChainId;
+  const targetChainName =
+    isMainnet ? chain.name : chain.testnetName;
+  const targetExplorer =
+    isMainnet ? chain.mainnetExplorer : chain.testnetExplorer;
+  const targetRpcUrl =
+    isMainnet ? chain.mainnetRpcUrl : chain.testnetRpcUrl;
+
+  /* Balance polling state — used in both modes. On mainnet we
+     don't show the GET TOKENS button (no faucets), but we still
+     want users to see their balance so they know they have gas. */
   const [balance, setBalance] = useState<bigint | null>(null);
   const [balanceLoaded, setBalanceLoaded] = useState(false);
   const [ready, setReady] = useState(false);
   const [copyToast, setCopyToast] = useState<string>("");
 
   const onCorrectChain =
-    isConnected && network.chainId === chain.testnetChainId;
+    isConnected && network.chainId === targetChainId;
 
-  /* Poll testnet balance every 15s while connected on right chain.
-     Stops once we see a non-zero balance — no point continuing to
-     spend RPC calls if the user already has funds. */
+  /* Poll balance while connected on the right chain. Stops once
+     non-zero balance seen (no point spending RPC calls when funded). */
   useEffect(() => {
     if (!isConnected || !address || !onCorrectChain || ready) return;
 
     let cancelled = false;
     async function pollBalance() {
-      const bal = await fetchTestnetBalance(chain, address!);
+      /* Use a custom adapter that respects the mode's RPC URL. */
+      const chainForBalance = mode === "mainnet"
+        ? { ...chain, testnetRpcUrl: targetRpcUrl }
+        : chain;
+      const bal = await fetchTestnetBalance(chainForBalance, address!);
       if (cancelled) return;
       setBalanceLoaded(true);
       if (bal !== null) {
@@ -891,9 +1100,8 @@ function DeployStep({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [isConnected, address, onCorrectChain, ready, chain]);
+  }, [isConnected, address, onCorrectChain, ready, chain, mode, targetRpcUrl]);
 
-  /* Auto-dismiss the copy toast after 2.5 seconds. */
   useEffect(() => {
     if (!copyToast) return;
     const timer = setTimeout(() => setCopyToast(""), 2500);
@@ -901,21 +1109,13 @@ function DeployStep({
   }, [copyToast]);
 
   async function handleGetTestTokens() {
-    if (!address) return;
-    /* Order matters: copy address first so the await resolves
-       within the user-initiated event handler (clipboard APIs
-       require this on most browsers). Then open faucet in a new
-       tab. */
+    if (!address || mode === "mainnet") return;
     const copied = await copyToClipboard(address);
     setCopyToast(
       copied
         ? `Address copied — paste it in the faucet`
         : `Couldn't auto-copy — your address: ${address.slice(0, 10)}…${address.slice(-4)}`,
     );
-    /* Open in a new tab. Some popup blockers may prevent this
-       if the click handler became "non-trusted" after the await,
-       but in practice modern browsers allow it because clipboard
-       writes don't break the trust chain. */
     window.open(chain.testnetFaucetUrl, "_blank", "noopener,noreferrer");
   }
 
@@ -923,25 +1123,25 @@ function DeployStep({
     setError("");
     setDeploying(true);
     try {
-      /* Deploy logic lives in a separate helper for testability.
-         The actual viem deploy call is wired there. */
-      const { executeDeploy } = await import("@/lib/deployer/executeDeploy");
+      const { executeDeploy } = await import(
+        "@/lib/deployer/executeDeploy"
+      );
       const result = await executeDeploy({
         chain,
+        isMainnet,
         template,
         parameters,
         deployerAddress: address!,
       });
 
-      /* Fire-and-forget: tell the New Projects feed about this
-         deployment so it shows up instantly with the verified badge.
-         Failure here doesn't fail the deploy — the contract is live
-         on chain regardless. The endpoint verifies the contract
-         exists on-chain before accepting (no shared secret needed). */
+      /* Register the deployment with the New Projects feed. */
       try {
-        await fetch("/api/alpha/register-deployment", {
+        await fetch("/api/alpha/internal-deployment-public", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-deploy-context": isMainnet ? "mainnet" : "testnet",
+          },
           body: JSON.stringify({
             contractAddress: result.contractAddress,
             chain: chain.id,
@@ -951,7 +1151,6 @@ function DeployStep({
             symbol: parameters.symbol,
             name: parameters.name,
             decimals: parameters.decimals,
-            isTestnet: true,
             socials: {
               website: intentData.website || undefined,
               twitter: intentData.twitter || undefined,
@@ -960,7 +1159,7 @@ function DeployStep({
           }),
         });
       } catch {
-        /* Non-fatal */
+        /* Non-fatal — contract is on-chain regardless. */
       }
 
       /* Send listing intent if email was provided */
@@ -990,8 +1189,8 @@ function DeployStep({
         contractAddress: result.contractAddress,
         txHash: result.txHash,
         blockNumber: result.blockNumber,
-        chainId: chain.testnetChainId,
-        testnetExplorer: chain.testnetExplorer,
+        chainId: targetChainId,
+        testnetExplorer: targetExplorer,
       });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1000,6 +1199,8 @@ function DeployStep({
       setDeploying(false);
     }
   }
+
+  const deployButtonEnabled = !deploying;
 
   return (
     <div className="space-y-4">
@@ -1010,7 +1211,8 @@ function DeployStep({
         <div className="flex justify-between text-[12px]">
           <span style={{ color: "var(--fg-dim)" }}>Chain</span>
           <span style={{ color: "var(--fg)" }}>
-            {chain.name} ({chain.testnetName})
+            {chain.name}
+            {isMainnet ? " (mainnet)" : ` (${chain.testnetName})`}
           </span>
         </div>
         <div className="flex justify-between text-[12px]">
@@ -1030,6 +1232,20 @@ function DeployStep({
             10^{String(parameters.decimals)}
           </span>
         </div>
+        {isMainnet && (
+          <div
+            className="flex justify-between text-[12px] pt-2"
+            style={{ borderTop: "1px solid var(--border)" }}
+          >
+            <span style={{ color: "var(--success, #10b981)" }}>Deployment fee</span>
+            <span
+              className="font-mono"
+              style={{ color: "var(--success, #10b981)" }}
+            >
+              FREE — only your gas
+            </span>
+          </div>
+        )}
       </div>
 
       {/* Wallet status */}
@@ -1060,14 +1276,14 @@ function DeployStep({
             <p className="text-[12px]" style={{ color: "var(--fg-muted)" }}>
               Wallet connected but on the wrong chain. Switch to{" "}
               <strong style={{ color: "var(--fg)" }}>
-                {chain.testnetName}
+                {targetChainName}
               </strong>{" "}
-              (chainId {chain.testnetChainId}) to deploy.
+              (chainId {targetChainId}) to deploy.
             </p>
           </div>
           <button
             type="button"
-            onClick={() => network.switchNetwork({ id: chain.testnetChainId } as never)}
+            onClick={() => network.switchNetwork({ id: targetChainId } as never)}
             className="w-full font-mono text-[11px] py-2 rounded"
             style={{
               background: "var(--bg-elevated)",
@@ -1092,29 +1308,34 @@ function DeployStep({
               {address}
             </div>
           </div>
+
           <button
             type="button"
             onClick={handleDeploy}
-            disabled={deploying}
+            disabled={!deployButtonEnabled}
             className="w-full font-mono text-[11px] py-3 rounded transition-colors"
             style={{
-              background: deploying
+              background: !deployButtonEnabled
                 ? "var(--bg-subtle)"
+                : isMainnet
+                ? "linear-gradient(135deg, var(--danger), #f59e0b)"
                 : "linear-gradient(135deg, var(--accent), var(--accent-soft))",
-              color: deploying ? "var(--fg-dim)" : "#fff",
+              color: !deployButtonEnabled ? "var(--fg-dim)" : "#fff",
               border: "none",
-              cursor: deploying ? "wait" : "pointer",
+              cursor: !deployButtonEnabled ? "not-allowed" : "pointer",
               letterSpacing: "0.05em",
             }}
           >
             {deploying
-              ? "DEPLOYING — DO NOT CLOSE THIS TAB…"
+              ? isMainnet
+                ? "DEPLOYING — DO NOT CLOSE THIS TAB (2 SIGNATURES NEEDED)…"
+                : "DEPLOYING — DO NOT CLOSE THIS TAB…"
+              : isMainnet
+              ? `DEPLOY TO ${chain.name.toUpperCase()} MAINNET`
               : `DEPLOY TO ${chain.testnetName.toUpperCase()}`}
           </button>
 
-          {/* Testnet tokens panel — shows current balance and a
-              one-click button to claim test tokens from the faucet
-              with the user's address pre-copied to clipboard. */}
+          {/* Balance / faucet panel */}
           <div
             className="card p-3"
             style={{
@@ -1137,7 +1358,11 @@ function DeployStep({
                       : "var(--fg-dim)",
                   }}
                 >
-                  {ready ? "✓ Ready to deploy" : "Testnet balance"}
+                  {ready
+                    ? "✓ Ready to deploy"
+                    : isMainnet
+                    ? `${chain.nativeSymbol} balance`
+                    : "Testnet balance"}
                 </div>
                 <div
                   className="text-[14px] font-medium mt-0.5"
@@ -1153,7 +1378,7 @@ function DeployStep({
                     : `${formatBalance(balance)} ${chain.nativeSymbol}`}
                 </div>
               </div>
-              {!ready && (
+              {!ready && !isMainnet && (
                 <button
                   type="button"
                   onClick={handleGetTestTokens}
@@ -1171,7 +1396,7 @@ function DeployStep({
                 </button>
               )}
             </div>
-            {!ready && (
+            {!ready && !isMainnet && (
               <p
                 className="text-[10px] mt-2"
                 style={{ color: "var(--fg-dim)" }}
@@ -1183,9 +1408,20 @@ function DeployStep({
                 every 15 seconds.
               </p>
             )}
+            {!ready && isMainnet && (
+              <p
+                className="text-[10px] mt-2"
+                style={{ color: "var(--fg-dim)" }}
+              >
+                You'll need {chain.nativeSymbol} in your wallet for the
+                deploy transaction's gas fee (paid to network validators —
+                INFI does not charge a deployment fee). Buy{" "}
+                {chain.nativeSymbol} on any major exchange and transfer to
+                your wallet before deploying.
+              </p>
+            )}
           </div>
 
-          {/* Copy toast — shows briefly when address is copied */}
           {copyToast && (
             <div
               className="card p-2 text-[11px] text-center"
@@ -1228,12 +1464,19 @@ function DeployStep({
 function SuccessStep({
   result,
   chain,
+  mode,
   onReset,
 }: {
   result: DeploymentResult;
   chain: (typeof DEPLOYER_CHAINS)[DeployerChainId];
+  mode: "testnet" | "mainnet";
   onReset: () => void;
 }) {
+  const explorerBase =
+    mode === "mainnet" ? chain.mainnetExplorer : chain.testnetExplorer;
+  const chainLabel =
+    mode === "mainnet" ? chain.name : chain.testnetName;
+
   return (
     <div className="space-y-4">
       <div className="card p-5 text-center">
@@ -1253,9 +1496,16 @@ function SuccessStep({
           className="text-[12px] max-w-md mx-auto leading-relaxed"
           style={{ color: "var(--fg-muted)" }}
         >
-          Your contract is live on {chain.testnetName} and has been
+          Your contract is live on {chainLabel} and has been
           listed on the SbSe Guardian New Projects feed with the INFI
           verified badge.
+          {mode === "mainnet" && (
+            <>
+              {" "}Source verification will be added in v29.6 — until then,
+              your contract shows as "unverified" on the block explorer
+              but is fully functional.
+            </>
+          )}
         </p>
       </div>
 
@@ -1263,7 +1513,7 @@ function SuccessStep({
         <div className="flex justify-between gap-2">
           <span style={{ color: "var(--fg-dim)" }}>Contract</span>
           <a
-            href={`${chain.testnetExplorer}/address/${result.contractAddress}`}
+            href={`${explorerBase}/address/${result.contractAddress}`}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono hover:underline truncate"
@@ -1275,7 +1525,7 @@ function SuccessStep({
         <div className="flex justify-between gap-2">
           <span style={{ color: "var(--fg-dim)" }}>Tx</span>
           <a
-            href={`${chain.testnetExplorer}/tx/${result.txHash}`}
+            href={`${explorerBase}/tx/${result.txHash}`}
             target="_blank"
             rel="noopener noreferrer"
             className="font-mono hover:underline truncate"
@@ -1288,6 +1538,12 @@ function SuccessStep({
           <span style={{ color: "var(--fg-dim)" }}>Block</span>
           <span style={{ color: "var(--fg)" }}>
             {result.blockNumber.toLocaleString()}
+          </span>
+        </div>
+        <div className="flex justify-between">
+          <span style={{ color: "var(--fg-dim)" }}>Mode</span>
+          <span style={{ color: "var(--fg)" }}>
+            {mode === "mainnet" ? "Mainnet (live)" : "Testnet"}
           </span>
         </div>
       </div>
