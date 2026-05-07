@@ -44,6 +44,7 @@ import {
   formatBalance,
   copyToClipboard,
 } from "@/lib/deployer/testnetTokens";
+import { encodeConstructorArgs } from "@/lib/deployer/encodeConstructorArgs";
 
 type WizardStep =
   | "chain"
@@ -239,11 +240,13 @@ export default function DeployWizard() {
           onBack={() => setStep("intent")}
         />
       )}
-      {step === "success" && deployResult && chain && (
+      {step === "success" && deployResult && chain && template && (
         <SuccessStep
           result={deployResult}
           chain={chain}
           mode={deployMode}
+          template={template}
+          parameters={parameters}
           onReset={reset}
         />
       )}
@@ -1459,23 +1462,205 @@ function DeployStep({
 
 /* ─────────────────────────────────────────────────────────────
    Step 7 — Success
+
+   On mount, kicks off Etherscan source verification automatically.
+   Status flows: pending → submitted → verifying → verified | failed
+   Failed state shows a retry button that re-runs the submit.
    ───────────────────────────────────────────────────────────── */
+
+type VerificationUiStatus =
+  | "idle"
+  | "pending"
+  | "submitted"
+  | "verifying"
+  | "verified"
+  | "failed"
+  | "skipped";
+
+interface VerifyApiResponse {
+  ok: boolean;
+  status?: VerificationUiStatus;
+  guid?: string;
+  message?: string;
+  error?: string;
+}
 
 function SuccessStep({
   result,
   chain,
   mode,
+  template,
+  parameters,
   onReset,
 }: {
   result: DeploymentResult;
   chain: (typeof DEPLOYER_CHAINS)[DeployerChainId];
   mode: "testnet" | "mainnet";
+  template: TokenTemplate;
+  parameters: Record<string, string | number>;
   onReset: () => void;
 }) {
   const explorerBase =
     mode === "mainnet" ? chain.mainnetExplorer : chain.testnetExplorer;
   const chainLabel =
     mode === "mainnet" ? chain.name : chain.testnetName;
+  const verifyChainId =
+    mode === "mainnet" ? chain.mainnetChainId : chain.testnetChainId;
+
+  /* Verification state machine */
+  const [verifyStatus, setVerifyStatus] = useState<VerificationUiStatus>("idle");
+  const [verifyMessage, setVerifyMessage] = useState<string>("");
+  const [verifyGuid, setVerifyGuid] = useState<string>("");
+
+  /* Build the manual-verify URL on the explorer's UI as a fallback
+     when API verification fails completely. */
+  const manualVerifyUrl = `${explorerBase}/verifyContract?a=${result.contractAddress}`;
+
+  /* Auto-attempt verification on mount. Runs once. The user can
+     manually retry via the button below. */
+  useEffect(() => {
+    let cancelled = false;
+    async function autoVerify() {
+      setVerifyStatus("pending");
+      setVerifyMessage("Encoding constructor arguments…");
+
+      let constructorArgs: string;
+      try {
+        constructorArgs = encodeConstructorArgs(template, parameters);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setVerifyStatus("failed");
+        setVerifyMessage(`Could not encode constructor arguments: ${msg}`);
+        return;
+      }
+
+      if (cancelled) return;
+      setVerifyMessage("Submitting source to Etherscan…");
+
+      let res: Response;
+      try {
+        res = await fetch("/api/alpha/verify-contract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "submit",
+            chainId: verifyChainId,
+            contractAddress: result.contractAddress,
+            constructorArguments: constructorArgs,
+          }),
+        });
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        setVerifyStatus("failed");
+        setVerifyMessage(`Verification request failed: ${msg}`);
+        return;
+      }
+
+      const json: VerifyApiResponse = await res.json();
+      if (cancelled) return;
+
+      if (!json.ok) {
+        setVerifyStatus("failed");
+        setVerifyMessage(json.error ?? "Submit failed");
+        return;
+      }
+
+      const status = json.status ?? "failed";
+      setVerifyStatus(status);
+      setVerifyMessage(json.message ?? "");
+      if (json.guid) setVerifyGuid(json.guid);
+
+      /* If submit returned anything not terminal, start polling. */
+      if (status === "submitted" || status === "verifying") {
+        if (json.guid) pollUntilDone(json.guid);
+      }
+    }
+
+    async function pollUntilDone(guid: string) {
+      const POLL_EVERY_MS = 5_000;
+      const MAX_POLLS = 18; // 90 seconds total
+      for (let i = 0; i < MAX_POLLS; i++) {
+        if (cancelled) return;
+        await new Promise((r) => setTimeout(r, POLL_EVERY_MS));
+        if (cancelled) return;
+
+        try {
+          const res = await fetch("/api/alpha/verify-contract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "status",
+              chainId: verifyChainId,
+              guid,
+            }),
+          });
+          const json: VerifyApiResponse = await res.json();
+          if (cancelled) return;
+
+          const status = json.status ?? "verifying";
+          setVerifyStatus(status);
+          setVerifyMessage(json.message ?? "");
+
+          if (status === "verified" || status === "failed") return;
+        } catch {
+          /* Transient error — keep polling. */
+        }
+      }
+
+      /* Timeout — leave status as-is and let user click retry. */
+      if (!cancelled) {
+        setVerifyMessage(
+          "Etherscan is still processing. You can try the retry button in a few minutes.",
+        );
+      }
+    }
+
+    autoVerify();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleRetry() {
+    setVerifyStatus("pending");
+    setVerifyMessage("Re-submitting to Etherscan…");
+    setVerifyGuid("");
+
+    let constructorArgs: string;
+    try {
+      constructorArgs = encodeConstructorArgs(template, parameters);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setVerifyStatus("failed");
+      setVerifyMessage(`Could not encode constructor arguments: ${msg}`);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/alpha/verify-contract", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "submit",
+          chainId: verifyChainId,
+          contractAddress: result.contractAddress,
+          constructorArguments: constructorArgs,
+        }),
+      });
+      const json: VerifyApiResponse = await res.json();
+      const status = json.ok ? json.status ?? "failed" : "failed";
+      setVerifyStatus(status);
+      setVerifyMessage(json.message ?? json.error ?? "");
+      if (json.guid) setVerifyGuid(json.guid);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setVerifyStatus("failed");
+      setVerifyMessage(`Retry failed: ${msg}`);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -1499,15 +1684,17 @@ function SuccessStep({
           Your contract is live on {chainLabel} and has been
           listed on the SbSe Guardian New Projects feed with the INFI
           verified badge.
-          {mode === "mainnet" && (
-            <>
-              {" "}Source verification will be added in v29.6 — until then,
-              your contract shows as "unverified" on the block explorer
-              but is fully functional.
-            </>
-          )}
         </p>
       </div>
+
+      {/* Verification status panel */}
+      <VerificationPanel
+        status={verifyStatus}
+        message={verifyMessage}
+        explorerUrl={`${explorerBase}/address/${result.contractAddress}#code`}
+        manualVerifyUrl={manualVerifyUrl}
+        onRetry={handleRetry}
+      />
 
       <div className="card p-4 space-y-3 text-[12px]">
         <div className="flex justify-between gap-2">
@@ -1662,3 +1849,138 @@ const inputStyle: React.CSSProperties = {
   fontFamily: "inherit",
   outline: "none",
 };
+
+/* ─────────────────────────────────────────────────────────────
+   VerificationPanel — used by SuccessStep to surface Etherscan
+   source verification status with appropriate visual treatment
+   per state.
+   ───────────────────────────────────────────────────────────── */
+
+function VerificationPanel({
+  status,
+  message,
+  explorerUrl,
+  manualVerifyUrl,
+  onRetry,
+}: {
+  status: VerificationUiStatus;
+  message: string;
+  explorerUrl: string;
+  manualVerifyUrl: string;
+  onRetry: () => void;
+}) {
+  const isWorking =
+    status === "idle" || status === "pending" ||
+    status === "submitted" || status === "verifying";
+  const isVerified = status === "verified";
+  const isFailed = status === "failed";
+
+  /* Color theme per state */
+  const accentColor = isVerified
+    ? "var(--success, #10b981)"
+    : isFailed
+    ? "var(--danger)"
+    : isWorking
+    ? "var(--accent-soft)"
+    : "var(--fg-dim)";
+
+  const bgColor = isVerified
+    ? "rgba(34,209,96,0.06)"
+    : isFailed
+    ? "rgba(239,68,68,0.06)"
+    : isWorking
+    ? "rgba(108,99,255,0.04)"
+    : "var(--bg-elevated)";
+
+  const icon = isVerified ? "✓" : isFailed ? "✗" : "⏳";
+
+  const headline = isVerified
+    ? "Source code verified on Etherscan"
+    : isFailed
+    ? "Auto-verification failed"
+    : isWorking
+    ? "Verifying source on Etherscan…"
+    : "Source verification";
+
+  return (
+    <div
+      className="card p-4"
+      style={{
+        background: bgColor,
+        borderLeft: `2px solid ${accentColor}`,
+        transition: "background 200ms, border 200ms",
+      }}
+    >
+      <div className="flex items-start gap-3">
+        <span style={{ color: accentColor, fontSize: "18px", lineHeight: "1" }}>
+          {icon}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div
+            className="font-mono text-[10px] tracking-[0.1em] uppercase mb-1"
+            style={{ color: accentColor }}
+          >
+            Etherscan source verification
+          </div>
+          <div
+            className="text-[13px] font-medium mb-1"
+            style={{ color: "var(--fg)" }}
+          >
+            {headline}
+          </div>
+          {message && (
+            <div
+              className="text-[11px] leading-relaxed"
+              style={{ color: "var(--fg-muted)" }}
+            >
+              {message}
+            </div>
+          )}
+
+          {/* Action row varies by state */}
+          {isVerified && (
+            <div className="mt-3">
+              <a
+                href={explorerUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[10px] hover:underline"
+                style={{ color: "var(--success, #10b981)" }}
+              >
+                view verified source on Etherscan →
+              </a>
+            </div>
+          )}
+
+          {isFailed && (
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={onRetry}
+                className="font-mono text-[10px] px-2 py-1 rounded"
+                style={{
+                  background: "var(--bg-subtle)",
+                  color: "var(--accent-soft)",
+                  border: "1px solid var(--accent-soft)",
+                  cursor: "pointer",
+                  letterSpacing: "0.05em",
+                }}
+              >
+                RETRY VERIFICATION
+              </button>
+              <a
+                href={manualVerifyUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-mono text-[10px] hover:underline"
+                style={{ color: "var(--fg-dim)" }}
+              >
+                or verify manually on Etherscan →
+              </a>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
