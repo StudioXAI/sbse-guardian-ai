@@ -30,6 +30,7 @@ interface SubmitBody {
   chainId: number;
   contractAddress: string;
   constructorArguments: string;
+  templateId: string;
 }
 
 interface StatusBody {
@@ -61,9 +62,13 @@ function validate(body: unknown): { ok: true; data: RequestBody } | { ok: false;
     if (constructorArguments && !/^[a-fA-F0-9]+$/.test(constructorArguments)) {
       return { ok: false, error: "Invalid constructorArguments — must be hex without 0x prefix" };
     }
+    const templateId = String(b.templateId ?? "").trim();
+    if (templateId.length === 0 || templateId.length > 50) {
+      return { ok: false, error: "Invalid templateId" };
+    }
     return {
       ok: true,
-      data: { action: "submit", chainId, contractAddress, constructorArguments },
+      data: { action: "submit", chainId, contractAddress, constructorArguments, templateId },
     };
   }
 
@@ -134,6 +139,7 @@ export async function POST(request: Request) {
       chainId: data.chainId,
       contractAddress: data.contractAddress,
       constructorArguments: data.constructorArguments,
+      templateId: data.templateId,
     });
   } else {
     result = await checkVerificationStatus(data.chainId, data.guid);

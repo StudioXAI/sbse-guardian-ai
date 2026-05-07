@@ -802,3 +802,101 @@ export const COMPILER_VERSION = "v0.8.20+commit.a1b79de6";
 
 /** Contract name as it appears in the source. */
 export const CONTRACT_NAME = "contracts/StandardERC20.sol:StandardERC20";
+
+/* ═══════════════════════════════════════════════════════════ */
+/* erc20-ozv5-meta — adds a logoURI string field                */
+/* ═══════════════════════════════════════════════════════════ */
+
+/** contracts/StandardERC20WithMeta.sol */
+const STANDARD_ERC20_WITH_META_SOL = `// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+contract StandardERC20WithMeta is ERC20, Ownable {
+    uint8 private _decimals;
+    string public logoURI;
+
+    constructor(
+        string memory name_,
+        string memory symbol_,
+        uint8 decimals_,
+        uint256 initialSupply_,
+        string memory logoURI_
+    ) ERC20(name_, symbol_) Ownable(msg.sender) {
+        _decimals = decimals_;
+        logoURI = logoURI_;
+        _mint(msg.sender, initialSupply_ * 10**decimals_);
+    }
+
+    function decimals() public view virtual override returns (uint8) {
+        return _decimals;
+    }
+}
+`;
+
+export const SOURCE_FILES_META: Record<string, string> = {
+  "contracts/StandardERC20WithMeta.sol": STANDARD_ERC20_WITH_META_SOL,
+  "@openzeppelin/contracts/token/ERC20/ERC20.sol": OZ_ERC20_SOL,
+  "@openzeppelin/contracts/token/ERC20/IERC20.sol": OZ_IERC20_SOL,
+  "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol": OZ_IERC20METADATA_SOL,
+  "@openzeppelin/contracts/utils/Context.sol": OZ_CONTEXT_SOL,
+  "@openzeppelin/contracts/access/Ownable.sol": OZ_OWNABLE_SOL,
+  "@openzeppelin/contracts/interfaces/draft-IERC6093.sol": OZ_IERC6093_SOL,
+};
+
+export function buildStandardJsonInputMeta(): string {
+  const sources: Record<string, { content: string }> = {};
+  for (const [path, content] of Object.entries(SOURCE_FILES_META)) {
+    sources[path] = { content };
+  }
+  const input = {
+    language: "Solidity",
+    sources,
+    settings: {
+      optimizer: { enabled: true, runs: 200 },
+      evmVersion: "paris",
+      outputSelection: {
+        "*": {
+          "*": ["abi", "evm.bytecode", "evm.deployedBytecode", "metadata"],
+        },
+      },
+    },
+  };
+  return JSON.stringify(input);
+}
+
+export const CONTRACT_NAME_META = "contracts/StandardERC20WithMeta.sol:StandardERC20WithMeta";
+
+/* ═══════════════════════════════════════════════════════════ */
+/* Template-aware API used by verifyContract                    */
+/* ═══════════════════════════════════════════════════════════ */
+
+/**
+ * Return verification metadata for a template. Decouples
+ * verifyContract from per-template constants — when we add
+ * more templates later, only this switch needs updating.
+ */
+export function getVerificationDataFor(templateId: string): {
+  standardJsonInput: string;
+  contractName: string;
+  compilerVersion: string;
+} | null {
+  switch (templateId) {
+    case "erc20-ozv5":
+      return {
+        standardJsonInput: buildStandardJsonInput(),
+        contractName: CONTRACT_NAME,
+        compilerVersion: COMPILER_VERSION,
+      };
+    case "erc20-ozv5-meta":
+      return {
+        standardJsonInput: buildStandardJsonInputMeta(),
+        contractName: CONTRACT_NAME_META,
+        compilerVersion: COMPILER_VERSION,
+      };
+    default:
+      return null;
+  }
+}

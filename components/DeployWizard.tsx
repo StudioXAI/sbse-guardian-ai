@@ -1548,6 +1548,7 @@ function SuccessStep({
             chainId: verifyChainId,
             contractAddress: result.contractAddress,
             constructorArguments: constructorArgs,
+            templateId: template.id,
           }),
         });
       } catch (err) {
@@ -1648,6 +1649,7 @@ function SuccessStep({
           chainId: verifyChainId,
           contractAddress: result.contractAddress,
           constructorArguments: constructorArgs,
+          templateId: template.id,
         }),
       });
       const json: VerifyApiResponse = await res.json();

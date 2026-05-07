@@ -33,8 +33,12 @@ import {
   ERC20_OZv5_BYTECODE,
   ERC20_OZv5_SOURCE_HASH,
 } from "./templates/erc20-ozv5.bytecode";
+import {
+  ERC20_OZv5_META_BYTECODE,
+  ERC20_OZv5_META_SOURCE_HASH,
+} from "./templates/erc20-ozv5-meta.bytecode";
 
-export type TemplateId = "erc20-ozv5";
+export type TemplateId = "erc20-ozv5" | "erc20-ozv5-meta";
 
 export interface TemplateParameter {
   /** Internal field name (also the Solidity constructor arg name). */
@@ -123,6 +127,62 @@ export const TEMPLATES: Record<TemplateId, TokenTemplate> = {
         placeholder: "1000000",
         defaultValue: 1000000,
         min: 1,
+      },
+    ],
+  },
+  "erc20-ozv5-meta": {
+    id: "erc20-ozv5-meta",
+    name: "Standard ERC-20 + On-Chain Logo",
+    description:
+      "OpenZeppelin v5 ERC-20 with Ownable, plus a `logoURI` view function exposing your project logo to block explorers and aggregators (CoinGecko, DEX Screener). Logo URL is set at deploy and cannot be changed afterwards.",
+    solcVersion: "0.8.20",
+    bytecodeReady: ERC20_OZv5_META_BYTECODE.length > 4,
+    bytecode: ERC20_OZv5_META_BYTECODE,
+    sourceHash: ERC20_OZv5_META_SOURCE_HASH,
+    parameters: [
+      {
+        name: "name",
+        label: "Token Name",
+        solidityType: "string",
+        helpText: "Full name of your token (e.g. \"Example Token\")",
+        placeholder: "Example Token",
+        maxLength: 64,
+      },
+      {
+        name: "symbol",
+        label: "Symbol",
+        solidityType: "string",
+        helpText: "Ticker symbol, 2–8 characters (e.g. \"EXMPL\")",
+        placeholder: "EXMPL",
+        maxLength: 8,
+      },
+      {
+        name: "decimals",
+        label: "Decimals",
+        solidityType: "uint8",
+        helpText: "Most tokens use 18. USDT/USDC use 6. Don't change unless you know why.",
+        defaultValue: 18,
+        min: 0,
+        max: 30,
+      },
+      {
+        name: "initialSupply",
+        label: "Initial Supply",
+        solidityType: "uint256",
+        helpText:
+          "Total tokens minted to your wallet at deployment. Decimals are applied automatically.",
+        placeholder: "1000000",
+        defaultValue: 1000000,
+        min: 1,
+      },
+      {
+        name: "logoURI",
+        label: "Logo URL",
+        solidityType: "string",
+        helpText:
+          "HTTPS URL to your token logo (PNG/JPG/SVG). Aggregators read this from the contract automatically. Cannot be changed after deploy.",
+        placeholder: "https://yourproject.com/logo.png",
+        maxLength: 256,
       },
     ],
   },

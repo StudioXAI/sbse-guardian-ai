@@ -17,11 +17,7 @@
    page calls /api/alpha/verify-contract which calls this module.
    ───────────────────────────────────────────────────────────── */
 
-import {
-  buildStandardJsonInput,
-  COMPILER_VERSION,
-  CONTRACT_NAME,
-} from "./templates/erc20-ozv5.sources";
+import { getVerificationDataFor } from "./templates/erc20-ozv5.sources";
 
 const ETHERSCAN_V2_BASE = "https://api.etherscan.io/v2/api";
 
@@ -49,6 +45,8 @@ export interface VerifyInput {
   contractAddress: string;
   /** ABI-encoded constructor arguments (without 0x prefix), or "" if no args. */
   constructorArguments: string;
+  /** Template id used to deploy — drives source/contract-name lookup. */
+  templateId: string;
 }
 
 export interface VerifyResult {
@@ -103,8 +101,17 @@ export async function submitVerification(
   /* Build the JSON Standard Input that includes all source files
      and compile settings. This must exactly match what Hardhat used
      at compile time, otherwise the verifier will recompile and get
-     different bytecode. */
-  const standardJson = buildStandardJsonInput();
+     different bytecode.
+
+     Template-aware: looks up the right sources + contract name for
+     the templateId the wizard recorded at deploy time. */
+  const verData = getVerificationDataFor(input.templateId);
+  if (!verData) {
+    return {
+      status: "failed",
+      message: `Unknown template id: ${input.templateId}. Cannot verify.`,
+    };
+  }
 
   /* Etherscan V2 verifysourcecode is a POST with form-encoded body.
      The 'codeformat' must be 'solidity-standard-json-input' for the
@@ -115,10 +122,10 @@ export async function submitVerification(
     module: "contract",
     action: "verifysourcecode",
     contractaddress: input.contractAddress,
-    sourceCode: standardJson,
+    sourceCode: verData.standardJsonInput,
     codeformat: "solidity-standard-json-input",
-    contractname: CONTRACT_NAME,
-    compilerversion: COMPILER_VERSION,
+    contractname: verData.contractName,
+    compilerversion: verData.compilerVersion,
     constructorArguements: input.constructorArguments, // Etherscan typo, intentional
   });
 
