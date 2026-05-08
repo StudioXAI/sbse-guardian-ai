@@ -212,32 +212,58 @@ export async function executeDeploy(
 
   /* Wait for the receipt via a public client (read-only RPC).
 
-     IMPORTANT: pass an explicit RPC URL rather than letting viem
-     pick its default. viem's chain defaults are sometimes free
-     public nodes that rate-limit aggressively when we poll every
-     few seconds for receipt. We use the same RPC URLs already
-     defined in chains.ts for the rest of the app — these are
-     vetted and reliable. */
+     Strategy: try the configured RPC first (publicnode/foundation
+     endpoints from chains.ts). If that fails — rate-limited,
+     timeout, etc. — fall back to the wallet's own provider via
+     custom(window.ethereum). The wallet has its own RPC the user
+     trusts and it usually has more generous rate limits than free
+     public nodes.
+
+     This redundancy matters for chains like Polygon where the
+     "official" public RPC is heavily rate-limited and frequently
+     drops requests during the receipt-poll window. */
   const rpcUrl = isMainnet ? chain.mainnetRpcUrl : chain.testnetRpcUrl;
-  const publicClient = createPublicClient({
-    chain: viemChain,
-    transport: http(rpcUrl),
-  });
+
+  async function fetchReceipt() {
+    /* Try 1: configured RPC */
+    try {
+      const publicClient = createPublicClient({
+        chain: viemChain,
+        transport: http(rpcUrl, {
+          retryCount: 3,
+          timeout: 15_000,
+        }),
+      });
+      return await publicClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 180_000, // 3 minutes
+        pollingInterval: 4_000,
+      });
+    } catch (primaryErr) {
+      /* Try 2: fall back to the wallet's provider */
+      const fallbackClient = createPublicClient({
+        chain: viemChain,
+        transport: custom((window as any).ethereum),
+      });
+      return await fallbackClient.waitForTransactionReceipt({
+        hash: txHash,
+        timeout: 120_000, // 2 more minutes
+        pollingInterval: 4_000,
+      });
+    }
+  }
 
   let receipt;
   try {
-    receipt = await publicClient.waitForTransactionReceipt({
-      hash: txHash,
-      timeout: 300_000, // 5 minutes
-      pollingInterval: 4_000,
-    });
+    receipt = await fetchReceipt();
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     /* The deploy tx already succeeded on-chain (we have txHash and
        it was broadcast). The failure here is just our receipt poll
-       hitting an RPC issue. Surface a clear message that includes
-       the tx hash so the user can see the contract on the explorer
-       even if the wizard couldn't fetch the receipt. */
+       hitting RPC issues on both primary and fallback. Surface a
+       clear message that includes the tx hash so the user can see
+       the contract on the explorer even if the wizard couldn't
+       fetch the receipt. */
     const explorerBase = isMainnet ? chain.mainnetExplorer : chain.testnetExplorer;
     throw new Error(
       `Transaction sent (${txHash.slice(0, 10)}…) but receipt fetch failed: ${msg}. Check ${explorerBase}/tx/${txHash} to see if it succeeded — if so, your contract is deployed even though the wizard couldn't show it.`,

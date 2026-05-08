@@ -1330,9 +1330,7 @@ function DeployStep({
             }}
           >
             {deploying
-              ? isMainnet
-                ? "DEPLOYING — DO NOT CLOSE THIS TAB (2 SIGNATURES NEEDED)…"
-                : "DEPLOYING — DO NOT CLOSE THIS TAB…"
+              ? "DEPLOYING — DO NOT CLOSE THIS TAB…"
               : isMainnet
               ? `DEPLOY TO ${chain.name.toUpperCase()} MAINNET`
               : `DEPLOY TO ${chain.testnetName.toUpperCase()}`}

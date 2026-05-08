@@ -103,7 +103,7 @@ export const DEPLOYER_CHAINS: Record<DeployerChainId, DeployerChain> = {
     mainnetExplorer: "https://polygonscan.com",
     testnetExplorer: "https://amoy.polygonscan.com",
     testnetRpcUrl: "https://rpc-amoy.polygon.technology",
-    mainnetRpcUrl: "https://polygon-rpc.com",
+    mainnetRpcUrl: "https://polygon-bor-rpc.publicnode.com",
     mainnetFeeWei: BigInt("12500000000000000000"), // 12.5 POL
     testnetFaucetUrl: "https://faucet.polygon.technology",
   },
