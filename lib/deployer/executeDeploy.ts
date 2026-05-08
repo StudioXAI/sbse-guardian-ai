@@ -210,16 +210,39 @@ export async function executeDeploy(
     throw new Error(`Deploy submit failed: ${msg}`);
   }
 
-  /* Wait for the receipt via a public client (read-only RPC). */
+  /* Wait for the receipt via a public client (read-only RPC).
+
+     IMPORTANT: pass an explicit RPC URL rather than letting viem
+     pick its default. viem's chain defaults are sometimes free
+     public nodes that rate-limit aggressively when we poll every
+     few seconds for receipt. We use the same RPC URLs already
+     defined in chains.ts for the rest of the app — these are
+     vetted and reliable. */
+  const rpcUrl = isMainnet ? chain.mainnetRpcUrl : chain.testnetRpcUrl;
   const publicClient = createPublicClient({
     chain: viemChain,
-    transport: http(),
+    transport: http(rpcUrl),
   });
 
-  const receipt = await publicClient.waitForTransactionReceipt({
-    hash: txHash,
-    timeout: 300_000, // 5 minutes
-  });
+  let receipt;
+  try {
+    receipt = await publicClient.waitForTransactionReceipt({
+      hash: txHash,
+      timeout: 300_000, // 5 minutes
+      pollingInterval: 4_000,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    /* The deploy tx already succeeded on-chain (we have txHash and
+       it was broadcast). The failure here is just our receipt poll
+       hitting an RPC issue. Surface a clear message that includes
+       the tx hash so the user can see the contract on the explorer
+       even if the wizard couldn't fetch the receipt. */
+    const explorerBase = isMainnet ? chain.mainnetExplorer : chain.testnetExplorer;
+    throw new Error(
+      `Transaction sent (${txHash.slice(0, 10)}…) but receipt fetch failed: ${msg}. Check ${explorerBase}/tx/${txHash} to see if it succeeded — if so, your contract is deployed even though the wizard couldn't show it.`,
+    );
+  }
 
   if (receipt.status !== "success") {
     throw new Error(
