@@ -234,9 +234,24 @@ export async function POST(request: Request) {
 
   const data = validation.data;
 
-  const ts = await verifyTurnstile(data.turnstileToken, ip);
-  if (!ts.ok) {
-    return NextResponse.json({ ok: false, error: ts.reason }, { status: 403 });
+  /* Bot check — required for the manual claim form, but BYPASSED
+     for the deploy wizard's auto-fire path. Same logic as the
+     internal-deployment-public endpoint:
+     - Wizard requests are gated by an actual on-chain deploy
+       (gas spent, contract exists)
+     - Wizard requests are also rate-limited per wallet on mainnet
+     - So Turnstile here would just block legitimate wizard sends
+       without adding meaningful protection. */
+  const deployContextHeader = (request.headers.get("x-deploy-context") ?? "")
+    .toLowerCase();
+  const isFromWizard =
+    deployContextHeader === "testnet" || deployContextHeader === "mainnet";
+
+  if (!isFromWizard) {
+    const ts = await verifyTurnstile(data.turnstileToken, ip);
+    if (!ts.ok) {
+      return NextResponse.json({ ok: false, error: ts.reason }, { status: 403 });
+    }
   }
 
   try {

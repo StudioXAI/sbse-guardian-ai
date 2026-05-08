@@ -1170,7 +1170,14 @@ function DeployStep({
         try {
           await fetch("/api/alpha/listing-intent", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              /* Same wizard-context signal as the registration call.
+                 Tells the endpoint this is from the deploy wizard
+                 (gated by on-chain deploy + per-wallet rate limit)
+                 not the manual public claim form. */
+              "x-deploy-context": isMainnet ? "mainnet" : "testnet",
+            },
             body: JSON.stringify({
               contractAddress: result.contractAddress,
               chain: chain.name,
