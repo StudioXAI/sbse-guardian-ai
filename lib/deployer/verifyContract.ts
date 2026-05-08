@@ -174,6 +174,20 @@ export async function submitVerification(
       };
     }
 
+    /* "Unable to locate ContractCode" means Etherscan's indexer
+       hasn't seen our contract yet, even though it's deployed
+       on-chain. This is a timing issue — Etherscan typically
+       catches up within 30-120 seconds on most chains, longer
+       during peak load. Distinguish it from other failures so
+       the wizard can present the right retry guidance. */
+    if (json.result.toLowerCase().includes("unable to locate")) {
+      return {
+        status: "failed",
+        message:
+          `Etherscan hasn't indexed your contract yet. This usually resolves within 1-2 minutes — wait briefly and click RETRY VERIFICATION. The contract IS deployed; Etherscan just needs time to see it. (Raw: ${json.result})`,
+      };
+    }
+
     return {
       status: "failed",
       message: `Etherscan rejected the submission: ${json.result}`,

@@ -1534,6 +1534,18 @@ function SuccessStep({
       }
 
       if (cancelled) return;
+      setVerifyMessage(
+        "Waiting for Etherscan to index your contract (15s)…",
+      );
+
+      /* Brief wait before the first submit. Even on fast chains
+         like Polygon, Etherscan's indexer can lag the chain by
+         10-30 seconds. Submitting too soon causes "Unable to
+         locate ContractCode" errors. 15s upfront wait dramatically
+         reduces the rate of those errors. */
+      await new Promise((r) => setTimeout(r, 15_000));
+      if (cancelled) return;
+
       setVerifyMessage("Submitting source to Etherscan…");
 
       let res: Response;
@@ -1567,8 +1579,60 @@ function SuccessStep({
       }
 
       const status = json.status ?? "failed";
+      const message = json.message ?? "";
+
+      /* Special case: if Etherscan says it can't locate the
+         contract code yet, the indexer is just lagging behind
+         the chain. Auto-retry once after 45 seconds — usually
+         enough for Etherscan to catch up. */
+      if (
+        status === "failed" &&
+        message.toLowerCase().includes("etherscan hasn't indexed")
+      ) {
+        setVerifyStatus("verifying");
+        setVerifyMessage(
+          "Etherscan hasn't indexed your contract yet. Auto-retrying in 45 seconds…",
+        );
+
+        await new Promise((r) => setTimeout(r, 45_000));
+        if (cancelled) return;
+
+        /* Re-submit. If it fails again, leave the user with the
+           manual retry button — we won't loop indefinitely. */
+        try {
+          const retryRes = await fetch("/api/alpha/verify-contract", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "submit",
+              chainId: verifyChainId,
+              contractAddress: result.contractAddress,
+              constructorArguments: constructorArgs,
+              templateId: template.id,
+            }),
+          });
+          const retryJson: VerifyApiResponse = await retryRes.json();
+          if (cancelled) return;
+
+          const retryStatus = retryJson.status ?? "failed";
+          setVerifyStatus(retryStatus);
+          setVerifyMessage(retryJson.message ?? "");
+          if (retryJson.guid) setVerifyGuid(retryJson.guid);
+
+          if (retryStatus === "submitted" || retryStatus === "verifying") {
+            if (retryJson.guid) pollUntilDone(retryJson.guid);
+          }
+        } catch (err) {
+          if (cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          setVerifyStatus("failed");
+          setVerifyMessage(`Auto-retry failed: ${msg}. Click RETRY VERIFICATION to try again manually.`);
+        }
+        return;
+      }
+
       setVerifyStatus(status);
-      setVerifyMessage(json.message ?? "");
+      setVerifyMessage(message);
       if (json.guid) setVerifyGuid(json.guid);
 
       /* If submit returned anything not terminal, start polling. */
