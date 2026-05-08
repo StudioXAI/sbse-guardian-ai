@@ -190,8 +190,17 @@ export async function POST(request: Request) {
   const apiKey = process.env.RESEND_API_KEY;
   const fromEmail = process.env.WATCHLIST_FROM_EMAIL;
   if (!apiKey || !fromEmail) {
+    /* Specific error for admins so they know which env var to set.
+       The wizard treats this as non-fatal — the contract is still
+       deployed, just no email gets sent to support. */
+    const missing: string[] = [];
+    if (!apiKey) missing.push("RESEND_API_KEY");
+    if (!fromEmail) missing.push("WATCHLIST_FROM_EMAIL");
     return NextResponse.json(
-      { ok: false, error: "Email service not configured" },
+      {
+        ok: false,
+        error: `Email service not configured. Set ${missing.join(" and ")} in Vercel environment variables.`,
+      },
       { status: 503 },
     );
   }

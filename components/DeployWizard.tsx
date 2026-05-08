@@ -2027,31 +2027,50 @@ function VerificationPanel({
           )}
 
           {isFailed && (
-            <div className="mt-3 flex items-center gap-2 flex-wrap">
-              <button
-                type="button"
-                onClick={onRetry}
-                className="font-mono text-[10px] px-2 py-1 rounded"
-                style={{
-                  background: "var(--bg-subtle)",
-                  color: "var(--accent-soft)",
-                  border: "1px solid var(--accent-soft)",
-                  cursor: "pointer",
-                  letterSpacing: "0.05em",
-                }}
-              >
-                RETRY VERIFICATION
-              </button>
-              <a
-                href={manualVerifyUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-mono text-[10px] hover:underline"
-                style={{ color: "var(--fg-dim)" }}
-              >
-                or verify manually on Etherscan →
-              </a>
-            </div>
+            <>
+              <div className="mt-3 flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={onRetry}
+                  className="font-mono text-[10px] px-2 py-1 rounded"
+                  style={{
+                    background: "var(--bg-subtle)",
+                    color: "var(--accent-soft)",
+                    border: "1px solid var(--accent-soft)",
+                    cursor: "pointer",
+                    letterSpacing: "0.05em",
+                  }}
+                >
+                  RETRY VERIFICATION
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await copyToClipboard(message);
+                  }}
+                  className="font-mono text-[10px] px-2 py-1 rounded"
+                  style={{
+                    background: "var(--bg-subtle)",
+                    color: "var(--fg-dim)",
+                    border: "1px solid var(--border)",
+                    cursor: "pointer",
+                    letterSpacing: "0.05em",
+                  }}
+                  title="Copy error message"
+                >
+                  COPY ERROR
+                </button>
+                <a
+                  href={manualVerifyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-mono text-[10px] hover:underline"
+                  style={{ color: "var(--fg-dim)" }}
+                >
+                  or verify manually on Etherscan →
+                </a>
+              </div>
+            </>
           )}
         </div>
       </div>

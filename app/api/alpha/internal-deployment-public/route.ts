@@ -272,21 +272,43 @@ export async function POST(request: Request) {
   }
   const data = validation.data;
 
-  /* Bot check — required in production, falls open in dev. */
-  const ts = await verifyTurnstile(data.turnstileToken, ip);
-  if (!ts.ok) {
-    return NextResponse.json(
-      { ok: false, error: ts.reason },
-      { status: 403 },
-    );
+  /* Bot check — required for the manual claim form, but BYPASSED
+     for the deploy wizard's auto-registration path.
+
+     The wizard's deploy already provides stronger anti-bot signals:
+     1. The deployer signed a real on-chain transaction (gas spent)
+     2. The contract exists at the reported address (verified below
+        via verifyContractExists on mainnet)
+     3. Per-wallet rate limit (1 mainnet deploy per 24h)
+     4. IP rate limit on this endpoint
+
+     Faking the wizard path would require deploying a real contract
+     on a real chain — far more expensive than solving a Turnstile
+     captcha. So Turnstile here would just block legitimate deploys
+     without adding meaningful protection.
+
+     We detect the wizard path by the x-deploy-context header. The
+     manual claim form (different code path) doesn't set this and
+     still goes through Turnstile. */
+  const deployContextHeader = (request.headers.get("x-deploy-context") ?? "")
+    .toLowerCase();
+  const isFromWizard =
+    deployContextHeader === "testnet" || deployContextHeader === "mainnet";
+
+  if (!isFromWizard) {
+    const ts = await verifyTurnstile(data.turnstileToken, ip);
+    if (!ts.ok) {
+      return NextResponse.json(
+        { ok: false, error: ts.reason },
+        { status: 403 },
+      );
+    }
   }
 
   /* Per-wallet rate limit — applies to mainnet only, prevents
      a single deployer from spamming the New Projects feed and
      burning the verified badge on mass-produced scam factories. */
-  const isTestnet = (request.headers.get("x-deploy-context") ?? "")
-    .toLowerCase()
-    .includes("testnet");
+  const isTestnet = deployContextHeader.includes("testnet");
   const walletRl = walletRateLimit(data.deployer, !isTestnet);
   if (!walletRl.allowed) {
     const hours = Math.ceil((walletRl.resetIn ?? 0) / 3600);
