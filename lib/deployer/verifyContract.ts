@@ -113,11 +113,15 @@ export async function submitVerification(
     };
   }
 
-  /* Etherscan V2 verifysourcecode is a POST with form-encoded body.
-     The 'codeformat' must be 'solidity-standard-json-input' for the
-     JSON Standard Input flow we're using. */
+  /* Etherscan V2 verifysourcecode is a POST. The 'chainid' goes
+     in the URL query string (V2 routes by chainid), the rest in
+     the form-encoded body. The 'codeformat' must be
+     'solidity-standard-json-input' for the JSON Standard Input
+     flow we're using. */
+  const submitUrl = new URL(ETHERSCAN_V2_BASE);
+  submitUrl.searchParams.set("chainid", String(input.chainId));
+
   const formData = new URLSearchParams({
-    chainid: String(input.chainId),
     apikey: apiKey,
     module: "contract",
     action: "verifysourcecode",
@@ -133,7 +137,7 @@ export async function submitVerification(
   const timer = setTimeout(() => controller.abort(), 30_000);
 
   try {
-    const res = await fetch(ETHERSCAN_V2_BASE, {
+    const res = await fetch(submitUrl.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: formData.toString(),

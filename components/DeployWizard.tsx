@@ -1696,19 +1696,13 @@ function SuccessStep({
         onRetry={handleRetry}
       />
 
+      {/* Prominent copyable contract address card */}
+      <ContractAddressCard
+        address={result.contractAddress}
+        explorerUrl={`${explorerBase}/address/${result.contractAddress}`}
+      />
+
       <div className="card p-4 space-y-3 text-[12px]">
-        <div className="flex justify-between gap-2">
-          <span style={{ color: "var(--fg-dim)" }}>Contract</span>
-          <a
-            href={`${explorerBase}/address/${result.contractAddress}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-mono hover:underline truncate"
-            style={{ color: "var(--info)" }}
-          >
-            {result.contractAddress}
-          </a>
-        </div>
         <div className="flex justify-between gap-2">
           <span style={{ color: "var(--fg-dim)" }}>Tx</span>
           <a
@@ -1855,6 +1849,86 @@ const inputStyle: React.CSSProperties = {
    source verification status with appropriate visual treatment
    per state.
    ───────────────────────────────────────────────────────────── */
+
+function ContractAddressCard({
+  address,
+  explorerUrl,
+}: {
+  address: string;
+  explorerUrl: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  /* Auto-clear the "copied" state after 2 seconds. */
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+
+  async function handleCopy() {
+    const ok = await copyToClipboard(address);
+    if (ok) setCopied(true);
+  }
+
+  return (
+    <div
+      className="card p-4"
+      style={{
+        background: "var(--bg-elevated)",
+        border: "1px solid var(--border)",
+      }}
+    >
+      <div
+        className="font-mono text-[10px] tracking-[0.1em] uppercase mb-2"
+        style={{ color: "var(--fg-dim)" }}
+      >
+        Contract address
+      </div>
+      <div className="flex items-center gap-2 mb-3">
+        <code
+          className="text-[12px] flex-1 break-all leading-relaxed"
+          style={{
+            color: "var(--fg)",
+            fontFamily: "monospace",
+          }}
+        >
+          {address}
+        </code>
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="font-mono text-[10px] px-3 py-2 rounded transition-colors"
+          style={{
+            background: copied ? "rgba(34,209,96,0.12)" : "var(--bg-subtle)",
+            color: copied ? "var(--success, #10b981)" : "var(--accent-soft)",
+            border: copied
+              ? "1px solid rgba(34,209,96,0.4)"
+              : "1px solid var(--accent-soft)",
+            cursor: "pointer",
+            letterSpacing: "0.05em",
+          }}
+        >
+          {copied ? "✓ COPIED" : "COPY ADDRESS"}
+        </button>
+        <a
+          href={explorerUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-mono text-[10px] px-3 py-2 rounded hover:underline"
+          style={{
+            color: "var(--fg-dim)",
+            letterSpacing: "0.05em",
+          }}
+        >
+          VIEW ON EXPLORER →
+        </a>
+      </div>
+    </div>
+  );
+}
 
 function VerificationPanel({
   status,
